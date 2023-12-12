@@ -137,7 +137,7 @@ func handleStartKeyGen(conn *websocket.Conn, msgBody []byte, teleID *string, web
 	}
 	respMsg := WrapMsg{
 		Type:     STARTKEYGEN,
-		Data:     []byte{},
+		Data:     []byte("0"),
 		SenderID: []byte("client2"),
 	}
 	respBytes, err := SerializeWMsg(&respMsg)
@@ -174,7 +174,7 @@ func handleKeyGen(wMsg WrapMsg, teleID *string) error {
 	gData, ok := allGroup[*teleID]
 	gLocker.RUnlock()
 	_ = ok
-	loginfo("----------- sender %v %v -----------", string(wMsg.SenderID), gData.dkg.AddMessage(string(wMsg.SenderID), data))
+	loginfo("----------- sender %v %v -----------", string(wMsg.SenderID), gData.dkg.AddMessage(string(data.GetId()), data))
 	return nil
 }
 
@@ -247,7 +247,7 @@ func StartDKGPerTelegramID(teleID string) error {
 	defer gData.dkg.Stop()
 	time.Sleep(500 * time.Millisecond)
 	gData.dkg.BroadcastFisrtMsg()
-	gData.dkg.BroadcastFisrtMsg()
+	//gData.dkg.BroadcastFisrtMsg()
 	if err := <-gData.l.Done(); err != nil {
 		panic(err)
 	} else {

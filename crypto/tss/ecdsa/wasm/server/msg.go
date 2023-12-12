@@ -81,11 +81,11 @@ func intToBytes(i int) []byte {
 }
 
 const (
-	STARTKEYGEN = byte(iota)
+	KEYGEN = byte(iota)
+	STARTKEYGEN
 	STARTREFRESH
 	STARTSIGN
 	KEYGENOUTPUT
-	KEYGEN
 	REF
 	SIGN
 )

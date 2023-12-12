@@ -140,11 +140,11 @@ func intToBytes(i int) []byte {
 }
 
 const (
-	STARTKEYGEN = byte(iota)
+	KEYGEN = byte(iota)
+	STARTKEYGEN
 	STARTREFRESH
 	STARTSIGN
 	KEYGENOUTPUT
-	KEYGEN
 	REF
 	SIGN
 )
@@ -186,6 +186,7 @@ func JSReceive(receiverID string, data []byte) error {
 	if err != nil {
 		return err
 	}
+	loginfo("receive msg %v=>%v type:%v", string(wMsg.SenderID), receiverID, wMsg.Type)
 	switch wMsg.Type {
 	case STARTKEYGEN:
 		dkg1.BroadcastFisrtMsg()
@@ -247,7 +248,7 @@ func loginfo(format string, args ...any) {
 func main() {
 	js.Global().Set("JSReceive", js.FuncOf(JSReceiveWrapper))
 	time.Sleep(3 * time.Second)
-	InitKeyGen("aaaaaaaaaaaaa")
+	InitKeyGen("")
 	loginfo("DKG start")
 	// defer dkg1.Stop()
 	// defer dkg2.Stop()
@@ -257,7 +258,7 @@ func main() {
 
 func handleKeyGen(wMsg WrapMsg, receiverID string) error {
 	msg := &dkg.Message{}
-	loginfo("kkkkkkkk Received msg tss, data %v", wMsg.Data)
+	loginfo("kkkkkkkk Received msg tss, receiver:%v data:%v", receiverID, wMsg.Data)
 	err := proto.Unmarshal(wMsg.Data, msg)
 	if err != nil {
 		loginfo("Error proto.Unmarshal: %v", err)
@@ -361,6 +362,9 @@ func KeyGen(telegramID string) (*ecdsa.PublicKey, error) {
 	PKs["client3"] = *myPartialPublicKey3
 
 	loginfo("Keygen done, server pk %v, got %v cost %v", p.String(), crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()), time.Since(st))
+	for c, pk := range PKs {
+		loginfo("peer:%v  ==>  %v", c, pk.String())
+	}
 	return result1.PublicKey.ToPubKey(), nil
 }
 

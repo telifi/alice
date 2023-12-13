@@ -288,5 +288,6 @@ func main() {
 	go wsServer.Start()
 	go sm.WatchRegister()
 
+	fmt.Println("listen 8080")
 	select {}
 }

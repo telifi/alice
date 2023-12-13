@@ -310,13 +310,17 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+	} else {
+		message := js.Global().Get("message").String()
+		d1 := js.Global().Get("d1").String()
+		loginfo("dk1----------------")
+		r1 := js.Global().Get("r1").String()
+		loginfo("dk1----------------")
+		sid := InitSig(base64ToBytes(d1), base64ToBytes(r1))
+		loginfo("dk3----------------")
+		loginfo("SIGN start")
+		StartSign(userId, sid, message)
 	}
-	// else {
-
-	// 	sid := InitSig(d1, r1, pks)
-	// 	loginfo("SIGN start")
-	// 	StartSign(userId, sid, message)
-	// }
 
 	select {}
 }
@@ -454,8 +458,8 @@ func StartKeyGen(telegramID, sID string) ([]byte, []byte, []byte, *ecdsa.PublicK
 		// "privateKey2": crypto.PubkeyToAddress(*result.PublicKey.ToPubKey()).String(),
 		"privateKey1": string(sk1),
 		"privateKey3": string(sk3),
-		// "smallPKs":    string(PKString),
-		"address": crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
+		"smallPKs":    string(PKString),
+		"address":     crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
 		// "party3": result3,
 	})))
 
@@ -689,7 +693,7 @@ func (l *listener) Done() <-chan error {
 	return l.errCh
 }
 
-func InitSig(dkgR1Bytes, refR1Bytes, PKs []byte) string {
+func InitSig(dkgR1Bytes, refR1Bytes []byte) string {
 	sID := "helloworld"
 	var err error
 
@@ -701,8 +705,8 @@ func InitSig(dkgR1Bytes, refR1Bytes, PKs []byte) string {
 	json.Unmarshal(refR1Bytes, refR1NewStruct)
 	refR1New, err := ConvertReshareResult(refR1NewStruct.Share, refR1NewStruct.PaillierKey, refR1NewStruct.YSecret, refR1NewStruct.PartialPublicKeys, refR1NewStruct.Y, refR1NewStruct.PedParameters)
 
-	pks := make(map[string]*ecpointgrouplaw.ECPoint)
-	json.Unmarshal(PKs, pks)
+	// pks := make(map[string]*ecpointgrouplaw.ECPoint)
+	// json.Unmarshal(PKs, pks)
 
 	pm1 := NewPeerManager("client1", []string{"client2"}, SIGN)
 	sign1, err = initSignCore(sID, "client1", "helloworld", dkgR1New, refR1New, pm1, ls1)
@@ -751,12 +755,12 @@ func initSignCore(sID, selfID, msg string, dkgR *dkg.Result, refR *refresh.Resul
 }
 
 func StartSign(telegramID, sID, msg string) error {
-	// msgReg := WrapMsg{
-	// 	Type:     REGISTER,
-	// 	SenderID: []byte(telegramID),
-	// 	Data:     []byte(telegramID),
-	// }
-	// JSSend(msgReg)
+	msgReg := WrapMsg{
+		Type:     REGISTER,
+		SenderID: []byte(telegramID),
+		Data:     []byte(telegramID),
+	}
+	JSSend(msgReg)
 	st := time.Now()
 	if sign1 == nil {
 		loginfo("SIGN is not init yet")
@@ -787,6 +791,15 @@ func StartSign(telegramID, sID, msg string) error {
 	signR1, _ = sign1.GetResult()
 
 	loginfo("sign done,  cost %v", time.Since(st))
+	js.Global().Call("getSignResult", js.Global().Get("JSON").Call("stringify", js.ValueOf(map[string]interface{}{
+		// "address": crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
+		// "privateKey1": crypto.PubkeyToAddress(*result1.PublicKey),
+		// "privateKey2": crypto.PubkeyToAddress(*result.PublicKey.ToPubKey()).String(),
+		"signatureR": signR1.R.String(),
+		"signatureS": signR1.S.String(),
+		// "party3": result3,
+	})))
+
 	// for c, pk := range PKs {
 	// 	loginfo("peer:%v  ==>  %v", c, pk.String())
 	// }

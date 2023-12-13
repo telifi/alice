@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -255,26 +256,68 @@ func loginfo(format string, args ...any) {
 	s := fmt.Sprintf(format, args...)
 	js.Global().Get("console").Call("log", s)
 }
+func base64ToBytes(base64Str string) []byte {
+	// Decode the Base64 string
+	decodedBytes, err := base64.StdEncoding.DecodeString(base64Str)
+	if err != nil {
+		// Handle error, e.g., log it or return an error
+		js.Global().Call("console", "log", "Error decoding Base64:", err.Error())
+		return nil
+	}
+
+	return decodedBytes
+}
 
 func main() {
 	js.Global().Set("JSReceive", js.FuncOf(JSReceiveWrapper))
-	time.Sleep(3 * time.Second)
-	sid := InitKeyGen()
-	loginfo("DKG start")
-	d1, d3, pks, _, err := StartKeyGen("okokokokook", sid)
-	if err != nil {
-		panic(err)
-	}
+	userId := js.Global().Get("userId").String()
+	tssServiceName := js.Global().Get("tssServiceName").String()
+	// privateShare := js.Global().Get("privateShare").String()
+	// message := js.Global().Get("message").String()
 
-	dR1, dR3, sid := InitRef(d1, d3, pks)
-	loginfo("REF start")
-	r1, _, err := StartRef("okokokokook", sid, dR1, dR3)
-	if err != nil {
-		panic(err)
+	if tssServiceName == "KeyGen" {
+		sid := InitKeyGen()
+		loginfo("DKG start")
+		d1, d3, pks, _, err := StartKeyGen(userId, sid)
+		if err != nil {
+			panic(err)
+		}
+		loginfo("DKG start", d1, d3, pks)
+
+		// sid = InitRef(d1, d3, pks)
+		// loginfo("REF start")
+		// _, _, err = StartRef(userId, sid)
+		// if err != nil {
+		// 	panic(err)
+		// }
+	} else if tssServiceName == "Precomputed" {
+		loginfo("Precomputed----------------")
+
+		d1 := js.Global().Get("d1").String()
+		loginfo("dk1----------------")
+
+		d3 := js.Global().Get("d3").String()
+		loginfo("dk2----------------", d3)
+
+		pks := js.Global().Get("pks").String()
+		loginfo("dk3----------------")
+
+		dR1, dR3, sid := InitRef(base64ToBytes(d1), base64ToBytes(d3), base64ToBytes(pks))
+		loginfo("dR1----------------", dR1)
+
+		loginfo("REF start")
+		_, _, err := StartRef(userId, sid, dR1, dR3)
+		if err != nil {
+			panic(err)
+		}
 	}
-	sid = InitSig(d1, r1, pks)
-	loginfo("SIGN start")
-	StartSign("okokokokook", sid, "helloworld")
+	// else {
+
+	// 	sid := InitSig(d1, r1, pks)
+	// 	loginfo("SIGN start")
+	// 	StartSign(userId, sid, message)
+	// }
+
 	select {}
 }
 
@@ -424,19 +467,28 @@ func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) (*DKGResult, *DKGResult, string
 	var err error
 
 	dkgR1NewStruct := &DKGResult{}
-	json.Unmarshal(dkgR1Bytes, dkgR1NewStruct)
+	err = json.Unmarshal(dkgR1Bytes, dkgR1NewStruct)
+	loginfo("0 %v cost", err)
+
 	dkgR1New, pPKs, err := ConvertDKGResult(dkgR1NewStruct.Pubkey, dkgR1NewStruct.Share, dkgR1NewStruct.BKs, dkgR1NewStruct.Rid, dkgR1NewStruct.PartialPublicKeys)
+	loginfo("1 %v cost", err)
 
 	dkgR3NewStruct := &DKGResult{}
-	json.Unmarshal(dkgR3Bytes, dkgR3NewStruct)
-	dkgR3New, pPKs, err := ConvertDKGResult(dkgR3NewStruct.Pubkey, dkgR3NewStruct.Share, dkgR3NewStruct.BKs, dkgR3NewStruct.Rid, dkgR3NewStruct.PartialPublicKeys)
+	err = json.Unmarshal(dkgR3Bytes, dkgR3NewStruct)
+	loginfo("2 %v cost", err)
 
-	pks := make(map[string]*ecpointgrouplaw.ECPoint)
-	json.Unmarshal(PKs, pks)
+	dkgR3New, pPKs, err := ConvertDKGResult(dkgR3NewStruct.Pubkey, dkgR3NewStruct.Share, dkgR3NewStruct.BKs, dkgR3NewStruct.Rid, dkgR3NewStruct.PartialPublicKeys)
+	loginfo("3 %v cost", err)
+
+	// pks := make(map[string]*ecpointgrouplaw.ECPoint)
+	// err = json.Unmarshal(PKs, pks)
+	// loginfo("4 %v cost", err)
 
 	pm1 := NewPeerManager("client1", []string{"client2", "client3"}, REF)
 
 	ref1, err = initRefCore(sID, "client1", dkgR1New, pm1, lr1, pPKs)
+	loginfo("5 %v cost", err)
+
 	if err != nil {
 		panic(err)
 	}
@@ -467,12 +519,12 @@ func initRefCore(sID string, selfID string, dkgR *dkg.Result, pm *peerManager, l
 }
 
 func StartRef(telegramID, sID string, dkgR1, dkgR3 *DKGResult) ([]byte, []byte, error) {
-	// msgReg := WrapMsg{
-	// 	Type:     REGISTER,
-	// 	SenderID: []byte(telegramID),
-	// 	Data:     []byte(telegramID),
-	// }
-	// JSSend(msgReg)
+	msgReg := WrapMsg{
+		Type:     REGISTER,
+		SenderID: []byte(telegramID),
+		Data:     []byte(telegramID),
+	}
+	JSSend(msgReg)
 	st := time.Now()
 	if ref1 == nil {
 		loginfo("REF is not init yet")

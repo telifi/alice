@@ -70,5 +70,11 @@ func (d *Sign) GetResult() (*Result, error) {
 func (d *Sign) Start() {
 	d.MessageMain.Start()
 
+	// d.ph.sendRound1Messages()
+}
+
+func (d *Sign) BroadcastFisrtMsg() {
+	// d.MessageMain.Start()
+
 	d.ph.sendRound1Messages()
 }

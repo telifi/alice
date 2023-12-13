@@ -77,5 +77,12 @@ func (d *Refresh) Start() {
 	d.MessageMain.Start()
 
 	// Send the first message to new peer
+	// cggmp.Broadcast(d.ph.peerManager, d.ph.getRound1Message())
+}
+
+func (d *Refresh) BroadcastFisrtMsg() {
+	// d.MessageMain.Start()
+
+	// Send the first message to new peer
 	cggmp.Broadcast(d.ph.peerManager, d.ph.getRound1Message())
 }

@@ -14,7 +14,10 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/getamis/alice/crypto/ecpointgrouplaw"
 	"github.com/getamis/alice/crypto/elliptic"
+	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp"
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/dkg"
+	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/refresh"
+	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/sign"
 	"github.com/getamis/alice/types"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
@@ -22,7 +25,9 @@ import (
 
 func JSKeyGen(this js.Value, p []js.Value) interface{} {
 	teleID := p[0].String()
-	pk, err := KeyGen(teleID)
+	sID := p[1].String()
+
+	pk, err := StartKeyGen(teleID, sID)
 	if err != nil {
 		// Handle error if needed
 		loginfo("Error in JSReceive:", err)
@@ -140,7 +145,8 @@ func intToBytes(i int) []byte {
 }
 
 const (
-	KEYGEN = byte(iota)
+	REGISTER = byte(iota)
+	KEYGEN
 	STARTKEYGEN
 	STARTREFRESH
 	STARTSIGN
@@ -151,13 +157,39 @@ const (
 
 var (
 	GlobalMsg = make(chan []byte, 10)
-	PKs       = map[string]ecpointgrouplaw.ECPoint{}
+	PKs       = map[string]*ecpointgrouplaw.ECPoint{}
 	ready     = make(chan bool, 2)
 	pPK       = make(chan []byte, 2)
 	dkg1      *dkg.DKG
-	l1        *listener
 	dkg3      *dkg.DKG
-	l3        *listener
+	dkgR1     *dkg.Result
+	dkgR3     *dkg.Result
+	ld1       = &listener{
+		errCh: make(chan error, 10),
+	}
+	ld3 = &listener{
+		errCh: make(chan error, 10),
+	}
+	ref1  *refresh.Refresh
+	ref3  *refresh.Refresh
+	refR1 *refresh.Result
+	refR3 *refresh.Result
+	lr1   = &listener{
+		errCh: make(chan error, 10),
+	}
+	lr3 = &listener{
+		errCh: make(chan error, 10),
+	}
+	sign1  *sign.Sign
+	sign3  *sign.Sign
+	signR1 *sign.Result
+	signR3 *sign.Result
+	ls1    = &listener{
+		errCh: make(chan error, 10),
+	}
+	ls3 = &listener{
+		errCh: make(chan error, 10),
+	}
 )
 
 func JSSend(msg WrapMsg) error {
@@ -195,49 +227,22 @@ func JSReceive(receiverID string, data []byte) error {
 		return handleKeyGen(wMsg, receiverID)
 	case KEYGENOUTPUT:
 		GlobalMsg <- wMsg.Data
-	case STARTREFRESH, STARTSIGN, SIGN, REF:
-		fmt.Printf("Pending: %v\n", wMsg.Type)
-		// return handleStartRefresh(msgBody, senderID, *gData)
-	// case STARTSIGN:
-	// 	// return handleStartSign(msgBody, senderID)
-	// case SIGN:
-	// 	// return handleStartSign(msgBody, senderID)
-	// case REF:
+	case STARTREFRESH:
+		ref1.BroadcastFisrtMsg()
+		ref3.BroadcastFisrtMsg()
+	case REF:
+		return handleRef(wMsg, receiverID)
+	case STARTSIGN:
+		sign1.BroadcastFisrtMsg()
+		// sign3.BroadcastFisrtMsg()
+
+	case SIGN:
+		return handleSign(wMsg, receiverID)
 	default:
 		fmt.Printf("Unknown message command: %v", wMsg.Type)
 	}
 	return nil
 
-	// msg := &dkg.Message{}
-	// if data[0] == 0 {
-	// 	loginfo("kkkkkkkk Received msg start, data %v", data)
-	// 	ready <- true
-	// 	return nil
-	// }
-	// if data[0] == 1 {
-	// 	loginfo("kkkkkkkk Received msg tss, data %v", data)
-	// 	data = data[1:]
-	// 	err := proto.Unmarshal([]byte(data), msg)
-	// 	if err != nil {
-	// 		loginfo("Error proto.Unmarshal: %v", err)
-	// 		return err
-	// 	}
-	// 	if receiverID == "client1" {
-	// 		return dkg1.AddMessage("client2", msg)
-	// 	}
-	// 	if receiverID == "client3" {
-	// 		return dkg3.AddMessage("client2", msg)
-	// 	}
-	// 	return nil
-	// }
-	// if data[0] == 2 {
-	// 	loginfo("kkkkkkkk Received msg pk, data %v", data)
-	// 	data = data[1:]
-	// 	GlobalMsg <- data
-	// 	return nil
-	// }
-	// loginfo("kkkkkkkk WTF %v", data)
-	// return nil
 }
 
 func loginfo(format string, args ...any) {
@@ -248,17 +253,22 @@ func loginfo(format string, args ...any) {
 func main() {
 	js.Global().Set("JSReceive", js.FuncOf(JSReceiveWrapper))
 	time.Sleep(3 * time.Second)
-	InitKeyGen("")
+	sid := InitKeyGen()
 	loginfo("DKG start")
-	// defer dkg1.Stop()
-	// defer dkg2.Stop()
-	KeyGen("okokokokook")
+	StartKeyGen("okokokokook", sid)
+
+	sid = InitRef()
+	loginfo("REF start")
+	StartRef("okokokokook", sid)
+	sid = InitSig()
+	loginfo("SIGN start")
+	StartSign("okokokokook", sid, "helloworld")
 	select {}
 }
 
 func handleKeyGen(wMsg WrapMsg, receiverID string) error {
 	msg := &dkg.Message{}
-	loginfo("kkkkkkkk Received msg tss, receiver:%v data:%v", receiverID, wMsg.Data)
+	loginfo("Received msg tss, sender %v receiver:%v data:%v", string(wMsg.SenderID), receiverID, wMsg.Data)
 	err := proto.Unmarshal(wMsg.Data, msg)
 	if err != nil {
 		loginfo("Error proto.Unmarshal: %v", err)
@@ -273,50 +283,53 @@ func handleKeyGen(wMsg WrapMsg, receiverID string) error {
 	return nil
 }
 
-func InitKeyGen(sid string) {
+func InitKeyGen() string {
+	sID := "helloworld"
 	var err1 error
 	var err3 error
-	l1 = &listener{
-		errCh: make(chan error, 10),
-	}
-	l3 = &listener{
-		errCh: make(chan error, 10),
-	}
-	dkg1, err1 = dkg.NewDKG(elliptic.Secp256k1(), NewPeerManager("client1", []string{"client2", "client3"}), []byte(sid), 2, 0, l1)
+
+	pm1 := NewPeerManager("client1", []string{"client2", "client3"}, KEYGEN)
+	dkg1, err1 = dkg.NewDKG(elliptic.Secp256k1(), pm1, []byte(sID), 2, 0, ld1)
 	loginfo("DKG return err %v", err1)
-	dkg3, err3 = dkg.NewDKG(elliptic.Secp256k1(), NewPeerManager("client3", []string{"client1", "client2"}), []byte(sid), 2, 0, l3)
+	pm3 := NewPeerManager("client3", []string{"client1", "client2"}, KEYGEN)
+	dkg3, err3 = dkg.NewDKG(elliptic.Secp256k1(), pm3, []byte(sID), 2, 0, ld3)
+	pm1.AddMsgMains(dkg1.MessageMain, dkg3.MessageMain)
+	pm3.AddMsgMains(dkg1.MessageMain, dkg3.MessageMain)
 	loginfo("DKG return err %v", err3)
+	return sID
 }
-func KeyGen(telegramID string) (*ecdsa.PublicKey, error) {
+func StartKeyGen(telegramID, sID string) (*ecdsa.PublicKey, error) {
+	msgReg := WrapMsg{
+		Type:     REGISTER,
+		SenderID: []byte(telegramID),
+		Data:     []byte(telegramID),
+	}
+	JSSend(msgReg)
 	st := time.Now()
 	if dkg1 == nil || dkg3 == nil {
 		loginfo("DKG is not init yet")
 		return nil, errors.Errorf("DKG is not init yet")
 	}
-	go func() {
-		dkg1.Start()
-	}()
-	go func() {
-		dkg3.Start()
-	}()
+	go dkg1.Start()
+	go dkg3.Start()
+
 	defer dkg1.Stop()
 	defer dkg3.Stop()
 	msgStart := WrapMsg{
 		Type:     STARTKEYGEN,
 		SenderID: []byte(telegramID),
-		Data:     []byte(telegramID),
+		Data:     []byte(sID),
 	}
-
 	JSSend(msgStart)
-	if err := <-l1.Done(); err != nil {
+	if err := <-ld1.Done(); err != nil {
 		return nil, err
 	} else {
 		loginfo("DKG 1 done!\n")
 	}
-	if err := <-l3.Done(); err != nil {
+	if err := <-ld3.Done(); err != nil {
 		return nil, err
 	} else {
-		fmt.Printf("DKG 3 done\n")
+		loginfo("DKG 3 done\n")
 	}
 	result1, _ := dkg1.GetResult()
 	result3, _ := dkg3.GetResult()
@@ -351,38 +364,140 @@ func KeyGen(telegramID string) (*ecdsa.PublicKey, error) {
 		loginfo("Cannot unmarshal proto message", "err", err)
 		return nil, err
 	}
-
 	p, err := msg.ToPoint()
 	if err != nil {
 		loginfo("Cannot convert to EcPoint", "err", err)
 		return nil, err
 	}
-	PKs["client2"] = *p
-	PKs["client1"] = *myPartialPublicKey1
-	PKs["client3"] = *myPartialPublicKey3
-
+	PKs["client2"] = p
+	PKs["client1"] = myPartialPublicKey1
+	PKs["client3"] = myPartialPublicKey3
+	dkgR1 = result1
+	dkgR3 = result3
 	loginfo("Keygen done, server pk %v, got %v cost %v", p.String(), crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()), time.Since(st))
 	for c, pk := range PKs {
 		loginfo("peer:%v  ==>  %v", c, pk.String())
 	}
+
 	return result1.PublicKey.ToPubKey(), nil
 }
 
-type peerManager struct {
-	msgType byte
-	id      string
-	ids     []string
+func InitRef() string {
+	sID := "helloworld"
+	var err error
+	pm1 := NewPeerManager("client1", []string{"client2", "client3"}, REF)
+
+	ref1, err = initRefCore(sID, "client1", dkgR1, pm1, lr1)
+	if err != nil {
+		panic(err)
+	}
+
+	pm3 := NewPeerManager("client3", []string{"client1", "client2"}, REF)
+	ref3, err = initRefCore(sID, "client3", dkgR3, pm3, lr3)
+	if err != nil {
+		panic(err)
+	}
+	pm1.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
+	pm3.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
+	return sID
 }
 
-func NewPeerManager(selfID string, ids []string) *peerManager {
+func initRefCore(sID string, selfID string, dkgR *dkg.Result, pm *peerManager, l *listener) (*refresh.Refresh, error) {
+	st := time.Now()
+	ssid := cggmp.ComputeSSID([]byte(sID), []byte(dkgR.Bks[selfID].String()), dkgR.Rid)
+	loginfo("Computed ssid %v cost %v", selfID, time.Since(st))
+
+	ref, err := refresh.NewRefresh(dkgR.Share, dkgR.PublicKey, pm, 2, PKs, dkgR.Bks, 2048, ssid, l)
+
+	if err != nil {
+		loginfo("Cannot create a new reshare core %v err", selfID, err)
+		return nil, err
+	}
+	loginfo("Init ref cost %v", time.Since(st))
+	return ref, nil
+}
+
+func StartRef(telegramID, sID string) error {
+	// msgReg := WrapMsg{
+	// 	Type:     REGISTER,
+	// 	SenderID: []byte(telegramID),
+	// 	Data:     []byte(telegramID),
+	// }
+	// JSSend(msgReg)
+	st := time.Now()
+	if ref1 == nil {
+		loginfo("REF is not init yet")
+		return errors.Errorf("REF is not init yet")
+	}
+	go ref1.Start()
+	go ref3.Start()
+
+	defer ref1.Stop()
+	defer ref3.Stop()
+	msgStart := WrapMsg{
+		Type:     STARTREFRESH,
+		SenderID: []byte(telegramID),
+		Data:     []byte(sID),
+	}
+	JSSend(msgStart)
+	if err := <-lr1.Done(); err != nil {
+		return err
+	} else {
+		loginfo("REF 1 done!\n")
+	}
+	if err := <-lr3.Done(); err != nil {
+		return err
+	} else {
+		loginfo("REF 3 done\n")
+	}
+	refR1, _ = ref1.GetResult()
+	refR3, _ = ref3.GetResult()
+
+	loginfo("Ref done,  cost %v", time.Since(st))
+
+	return nil
+}
+
+func handleRef(wMsg WrapMsg, receiverID string) error {
+	msg := &refresh.Message{}
+	loginfo("Received msg ref, sender %v receiver:%v data:%v", string(wMsg.SenderID), receiverID, wMsg.Data)
+	err := proto.Unmarshal(wMsg.Data, msg)
+	if err != nil {
+		loginfo("Error proto.Unmarshal: %v", err)
+		return err
+	}
+	if receiverID == "client1" {
+		return ref1.AddMessage(string(wMsg.SenderID), msg)
+	}
+	if receiverID == "client3" {
+		return ref3.AddMessage(string(wMsg.SenderID), msg)
+	}
+	return nil
+}
+
+type peerManager struct {
+	msgMain1 types.MessageMain
+	msgMain3 types.MessageMain
+	msgType  byte
+	id       string
+	ids      []string
+}
+
+func NewPeerManager(selfID string, ids []string, msgType byte) *peerManager {
 	return &peerManager{
-		id:  selfID,
-		ids: ids,
+		msgType: msgType,
+		id:      selfID,
+		ids:     ids,
 	}
 }
 
 func (p *peerManager) NumPeers() uint32 {
 	return uint32(len(p.ids))
+}
+
+func (p *peerManager) AddMsgMains(msgMain1, msgMain3 types.MessageMain) {
+	p.msgMain1 = msgMain1
+	p.msgMain3 = msgMain3
 }
 
 func (p *peerManager) SelfID() string {
@@ -406,14 +521,14 @@ func (p *peerManager) MustSend(peerId string, message interface{}) {
 	}
 	loginfo("Trying to send %v %v %v %v", peerId, message.(types.Message).GetMessageType(), bs, len(bs))
 	if peerId == "client1" {
-		err = dkg1.AddMessage(p.SelfID(), message.(types.Message))
+		err = p.msgMain1.AddMessage(p.SelfID(), message.(types.Message))
 		loginfo("Trying to send %v %v to dkg1", p.SelfID(), peerId)
 		return
 	}
 	if peerId == "client2" {
 		msgOutput := WrapMsg{
 			Type:     p.msgType,
-			SenderID: []byte("client1"),
+			SenderID: []byte(p.SelfID()),
 			Data:     bs,
 		}
 		err = JSSend(msgOutput)
@@ -421,7 +536,7 @@ func (p *peerManager) MustSend(peerId string, message interface{}) {
 		return
 	}
 	if peerId == "client3" {
-		err = dkg3.AddMessage(p.SelfID(), message.(types.Message))
+		err = p.msgMain3.AddMessage(p.SelfID(), message.(types.Message))
 		fmt.Printf("Trying to send %v %v to dkg3", p.SelfID(), peerId)
 		return
 	}
@@ -453,4 +568,114 @@ func (l *listener) OnStateChanged(oldState types.MainState, newState types.MainS
 
 func (l *listener) Done() <-chan error {
 	return l.errCh
+}
+
+func InitSig() string {
+	sID := "helloworld"
+	var err error
+
+	pm1 := NewPeerManager("client1", []string{"client2"}, SIGN)
+	sign1, err = initSignCore(sID, "client1", "helloworld", dkgR1, refR1, pm1, ls1)
+	if err != nil {
+		panic(err)
+	}
+
+	// pm3 := NewPeerManager("client3", []string{"client1", "client2"}, SIGN)
+	// sign3, err = initSignCore(sID, "client3", "helloworld", dkgR3, refR3, pm3, ls3)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	pm1.AddMsgMains(sign1.MessageMain, nil)
+	// pm3.AddMsgMains(sign1.MessageMain, sign3.MessageMain)
+	return sID
+}
+
+func initSignCore(sID, selfID, msg string, dkgR *dkg.Result, refR *refresh.Result, pm *peerManager, l *listener) (*sign.Sign, error) {
+	st := time.Now()
+	ssid := cggmp.ComputeSSID([]byte(sID), []byte(dkgR.Bks[selfID].String()), dkgR.Rid)
+	loginfo("Computed ssid %v cost %v", selfID, time.Since(st))
+	delete(dkgR.Bks, "client3")
+	delete(refR.PedParameter, "client3")
+	delete(refR.PartialPubKey, "client3")
+
+	sign, err := sign.NewSign(
+		2,
+		ssid,
+		refR.Share,
+		dkgR.PublicKey,
+		refR.PartialPubKey,
+		refR.PaillierKey,
+		refR.PedParameter,
+		dkgR.Bks,
+		[]byte(msg),
+		pm,
+		l,
+	)
+
+	if err != nil {
+		loginfo("Cannot create a new reshare core %v err", selfID, err)
+		return nil, err
+	}
+	loginfo("Init sign cost %v", time.Since(st))
+	return sign, nil
+}
+
+func StartSign(telegramID, sID, msg string) error {
+	// msgReg := WrapMsg{
+	// 	Type:     REGISTER,
+	// 	SenderID: []byte(telegramID),
+	// 	Data:     []byte(telegramID),
+	// }
+	// JSSend(msgReg)
+	st := time.Now()
+	if sign1 == nil {
+		loginfo("SIGN is not init yet")
+		return errors.Errorf("SIGN is not init yet")
+	}
+	go sign1.Start()
+	// go sign3.Start()
+
+	defer sign1.Stop()
+	// defer sign3.Stop()
+	msgStart := WrapMsg{
+		Type:     STARTSIGN,
+		SenderID: []byte(telegramID),
+		Data:     []byte(sID),
+	}
+	JSSend(msgStart)
+	if err := <-ls1.Done(); err != nil {
+		return err
+	} else {
+		loginfo("SIG 1 done!\n")
+	}
+	// if err := <-ls3.Done(); err != nil {
+	// 	return err
+	// } else {
+	// 	loginfo("SIG 3 done\n")
+	// }
+	// signR3, _ = sign3.GetResult()
+	signR1, _ = sign1.GetResult()
+
+	loginfo("sign done,  cost %v", time.Since(st))
+	// for c, pk := range PKs {
+	// 	loginfo("peer:%v  ==>  %v", c, pk.String())
+	// }
+	return nil
+}
+
+func handleSign(wMsg WrapMsg, receiverID string) error {
+	msg := &sign.Message{}
+	loginfo("Received msg ref, sender %v receiver:%v data:%v", string(wMsg.SenderID), receiverID, wMsg.Data)
+	err := proto.Unmarshal(wMsg.Data, msg)
+	if err != nil {
+		loginfo("Error proto.Unmarshal: %v", err)
+		return err
+	}
+	if receiverID == "client1" {
+		return sign1.AddMessage(string(wMsg.SenderID), msg)
+	}
+	if receiverID == "client3" {
+		return sign3.AddMessage(string(wMsg.SenderID), msg)
+	}
+	return nil
 }

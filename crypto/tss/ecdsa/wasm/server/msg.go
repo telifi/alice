@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 )
 
@@ -80,8 +81,23 @@ func intToBytes(i int) []byte {
 	return length[:]
 }
 
+func (m *WrapMsg) ToWSMsg(rID string) interface{} {
+
+	wMsgByte, err := SerializeWMsg(m)
+	if err != nil {
+		loginfo("Cannot serialize message, err %v", err)
+		return nil
+	}
+
+	wsMsg := map[string]string{}
+	wsMsg["data"] = base64.StdEncoding.EncodeToString(wMsgByte)
+	wsMsg["receiverid"] = rID
+	return wsMsg
+}
+
 const (
-	KEYGEN = byte(iota)
+	REGISTER = byte(iota)
+	KEYGEN
 	STARTKEYGEN
 	STARTREFRESH
 	STARTSIGN

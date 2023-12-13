@@ -1,0 +1,168 @@
+name: MPC node server deployment
+
+on:
+  push:
+    branches:
+      - master
+
+  workflow_dispatch:
+    inputs:
+      hubAddressGroupObject:
+        type: choice
+        description: 'Deploy service 🚀🚀🚀'
+        required: true
+        default: 'deploy'
+        options:
+          - 'deploy'
+    branches:
+      - master
+
+env:
+  NAME_SERVICE: telifi-mpc-node-server
+  IMAGE_TAG_LATEST: latest
+  DOCKER_BUILDKIT: 1
+  AWS_REGION: ap-southeast-1
+  BRANCH_CD_REPOSITORY: master
+  CD_REPOSITORY: telifi/argocd
+  ROOT_PATH_CD_REPOSITORY: argocd
+  VAULT_SERVER: https://vault.telifi.xyz
+
+jobs:
+  build-prod:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Pre-check step and set env dev
+        id: get_current_env_prod
+        if: ${{ github.event.ref == 'refs/heads/master' }}
+        run: |
+          if [[ ${{ github.event.ref }} == 'refs/heads/master' ]]; then
+            echo "CURRENT_ENV=prod" >> "$GITHUB_ENV"
+            echo "[INFO] PASSED pre-check. Using build automatically"
+            echo "[INFO] PASSED pre-check. Using build automatically"
+            exit 0
+          else
+            echo "[ERR] You are not allowed to run pipeline"
+            echo "[ERR] Your action has been reported to your admin"
+            exit 1
+          fi
+
+      - name: Import Secrets
+        id: import-secrets
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_SERVER }}
+          token: ${{ secrets.VAULT_TOKEN }}
+          tlsSkipVerify: true
+          secrets: |
+            /kv-v2/data/sre-data/github ACTION_TOKEN |ACTION_TOKEN;
+            /kv-v2/data/sre-data/github AWS_ACCESS_KEY_ID |AWS_ACCESS_KEY_ID;
+            /kv-v2/data/sre-data/github AWS_SECRET_ACCESS_KEY | AWS_SECRET_ACCESS_KEY;
+            /kv-v2/data/sre-data/github GITHUB_TOKEN | GITHUB_TOKEN;
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1.5.3
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        timeout-minutes: 15 #####
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_TAG=$(echo ${{ github.sha }} | cut -c1-9)
+          ECR_REPOSITORY="${NAME_SERVICE}"
+
+          echo "Build image ${ECR_REPOSITORY}"
+
+          docker build --pull --build-arg GITHUB_TOKEN="${GITHUB_TOKEN}" -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} -f ./Dockerfile .
+          docker tag ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG_LATEST}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG_LATEST}
+
+  deploy-prod:
+    if: startsWith(github.ref, 'refs/heads/master')
+    needs: build-prod
+    environment: prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Pre-check step and set env dev
+        id: get_current_env_prod
+        if: ${{ github.event.ref == 'refs/heads/master' }}
+        run: |
+          if [[ ${{ github.event.ref }} == 'refs/heads/master' ]]; then
+            echo "CURRENT_ENV=prod" >> "$GITHUB_ENV"
+            echo "[INFO] PASSED pre-check. Using build automatically"
+            echo "[INFO] PASSED pre-check. Using build automatically"
+            exit 0
+          else
+            echo "[ERR] You are not allowed to run pipeline"
+            echo "[ERR] Your action has been reported to your admin"
+            exit 1
+          fi
+
+      - name: Import Secrets
+        id: import-secrets
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_SERVER }}
+          token: ${{ secrets.VAULT_TOKEN }}
+          tlsSkipVerify: true
+          secrets: |
+            /kv-v2/data/sre-data/github ACTION_TOKEN |ACTION_TOKEN;
+            /kv-v2/data/sre-data/github AWS_ACCESS_KEY_ID |AWS_ACCESS_KEY_ID;
+            /kv-v2/data/sre-data/github AWS_SECRET_ACCESS_KEY | AWS_SECRET_ACCESS_KEY;
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1.5.3
+
+      - name: Checkout argocd repository
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.CD_REPOSITORY }}
+          ref: ${{ env.BRANCH_CD_REPOSITORY }}
+          token: ${{ env.ACTION_TOKEN }}
+          path: ${{ env.ROOT_PATH_CD_REPOSITORY }}
+
+      - name: Update helm chart, commit files to ArgoCD
+        run: |
+          IMAGE_TAG=$(echo ${{ github.sha }} | cut -c1-9)
+          echo "Working dir helm chart:" $PWD
+          echo "Tagging:" ${IMAGE_TAG}
+
+          cd argocd/telifi-v2
+
+          sed -i -e "s/tag: .*/tag: ${IMAGE_TAG}/g" ./chart/env/${CURRENT_ENV}/${NAME_SERVICE}-values.yaml
+          rm -rf ./chart/env/${CURRENT_ENV}/${NAME_SERVICE}-values.yaml-e
+          if [[ -z $(git status -s) ]]; then
+            echo -e '[WARNING] Nothing commit for deployments ArgoCD, working tree clean'
+            exit 0
+          else
+            git config user.email "${{ env.NAME_SERVICE }}_dev@github.com"
+            git config user.name "${{ env.NAME_SERVICE }}_dev"
+
+            git add .
+            git commit -am "Update image tag helm chart for ${{ env.NAME_SERVICE }} on ${CURRENT_ENV}"
+            git push -u origin ${{ env.BRANCH_CD_REPOSITORY }}
+          fi

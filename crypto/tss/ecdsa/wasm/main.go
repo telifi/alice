@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"syscall/js"
 	"time"
@@ -27,7 +28,7 @@ func JSKeyGen(this js.Value, p []js.Value) interface{} {
 	teleID := p[0].String()
 	sID := p[1].String()
 
-	pk, err := StartKeyGen(teleID, sID)
+	_, _, _, pk, err := StartKeyGen(teleID, sID)
 	if err != nil {
 		// Handle error if needed
 		loginfo("Error in JSReceive:", err)
@@ -255,12 +256,18 @@ func main() {
 	time.Sleep(3 * time.Second)
 	sid := InitKeyGen()
 	loginfo("DKG start")
-	StartKeyGen("okokokokook", sid)
+	d1, d3, pks, _, err := StartKeyGen("okokokokook", sid)
+	if err != nil {
+		panic(err)
+	}
 
-	sid = InitRef()
+	sid = InitRef(d1, d3, pks)
 	loginfo("REF start")
-	StartRef("okokokokook", sid)
-	sid = InitSig()
+	r1, _, err := StartRef("okokokokook", sid)
+	if err != nil {
+		panic(err)
+	}
+	sid = InitSig(d1, r1, pks)
 	loginfo("SIGN start")
 	StartSign("okokokokook", sid, "helloworld")
 	select {}
@@ -298,7 +305,7 @@ func InitKeyGen() string {
 	loginfo("DKG return err %v", err3)
 	return sID
 }
-func StartKeyGen(telegramID, sID string) (*ecdsa.PublicKey, error) {
+func StartKeyGen(telegramID, sID string) ([]byte, []byte, []byte, *ecdsa.PublicKey, error) {
 	msgReg := WrapMsg{
 		Type:     REGISTER,
 		SenderID: []byte(telegramID),
@@ -308,7 +315,7 @@ func StartKeyGen(telegramID, sID string) (*ecdsa.PublicKey, error) {
 	st := time.Now()
 	if dkg1 == nil || dkg3 == nil {
 		loginfo("DKG is not init yet")
-		return nil, errors.Errorf("DKG is not init yet")
+		return nil, nil, nil, nil, errors.Errorf("DKG is not init yet")
 	}
 	go dkg1.Start()
 	go dkg3.Start()
@@ -322,12 +329,12 @@ func StartKeyGen(telegramID, sID string) (*ecdsa.PublicKey, error) {
 	}
 	JSSend(msgStart)
 	if err := <-ld1.Done(); err != nil {
-		return nil, err
+		return nil, nil, nil, nil, err
 	} else {
 		loginfo("DKG 1 done!\n")
 	}
 	if err := <-ld3.Done(); err != nil {
-		return nil, err
+		return nil, nil, nil, nil, err
 	} else {
 		loginfo("DKG 3 done\n")
 	}
@@ -337,7 +344,7 @@ func StartKeyGen(telegramID, sID string) (*ecdsa.PublicKey, error) {
 	pkPointMsg, err := myPartialPublicKey1.ToEcPointMessage()
 	pkBytes, err := proto.Marshal(pkPointMsg)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, nil, err
 	}
 	msgOutput := WrapMsg{
 		Type:     KEYGENOUTPUT,
@@ -349,7 +356,7 @@ func StartKeyGen(telegramID, sID string) (*ecdsa.PublicKey, error) {
 	pkPointMsg, err = myPartialPublicKey3.ToEcPointMessage()
 	pkBytes, err = proto.Marshal(pkPointMsg)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, nil, err
 	}
 	msgOutput = WrapMsg{
 		Type:     KEYGENOUTPUT,
@@ -362,38 +369,73 @@ func StartKeyGen(telegramID, sID string) (*ecdsa.PublicKey, error) {
 	err = proto.Unmarshal(serverPK, &msg)
 	if err != nil {
 		loginfo("Cannot unmarshal proto message", "err", err)
-		return nil, err
+		return nil, nil, nil, nil, err
 	}
 	p, err := msg.ToPoint()
 	if err != nil {
 		loginfo("Cannot convert to EcPoint", "err", err)
-		return nil, err
+		return nil, nil, nil, nil, err
 	}
 	PKs["client2"] = p
 	PKs["client1"] = myPartialPublicKey1
 	PKs["client3"] = myPartialPublicKey3
 	dkgR1 = result1
+	sk1, err := json.Marshal(dkgR1)
+	if err != nil {
+		loginfo("Cannot marshal dkgR1 err %v", err)
+		return nil, nil, nil, nil, err
+	}
 	dkgR3 = result3
+	sk3, err := json.Marshal(dkgR3)
+	if err != nil {
+		loginfo("Cannot marshal dkgR1 err %v", err)
+		return nil, nil, nil, nil, err
+	}
 	loginfo("Keygen done, server pk %v, got %v cost %v", p.String(), crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()), time.Since(st))
 	for c, pk := range PKs {
 		loginfo("peer:%v  ==>  %v", c, pk.String())
 	}
+	PKString, err := json.Marshal(PKs)
+	if err != nil {
+		loginfo("Cannot marshal dkgR1 err %v", err)
+		return nil, nil, nil, nil, err
+	}
+	js.Global().Call("getKeyGen", js.Global().Get("JSON").Call("stringify", js.ValueOf(map[string]interface{}{
+		// "address": crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
+		// "privateKey1": crypto.PubkeyToAddress(*result1.PublicKey),
+		// "privateKey2": crypto.PubkeyToAddress(*result.PublicKey.ToPubKey()).String(),
+		"privateKey1": string(sk1),
+		"privateKey3": string(sk3),
+		"smallPKs":    string(PKString),
+		"address":     crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
+		// "party3": result3,
+	})))
 
-	return result1.PublicKey.ToPubKey(), nil
+	return sk1, sk3, PKString, result1.PublicKey.ToPubKey(), nil
 }
 
-func InitRef() string {
+func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) string {
 	sID := "helloworld"
 	var err error
+
+	dkgR1New := &dkg.Result{}
+	json.Unmarshal(dkgR1Bytes, dkgR1New)
+
+	dkgR3New := &dkg.Result{}
+	json.Unmarshal(dkgR3Bytes, dkgR3New)
+
+	pks := make(map[string]*ecpointgrouplaw.ECPoint)
+	json.Unmarshal(PKs, pks)
+
 	pm1 := NewPeerManager("client1", []string{"client2", "client3"}, REF)
 
-	ref1, err = initRefCore(sID, "client1", dkgR1, pm1, lr1)
+	ref1, err = initRefCore(sID, "client1", dkgR1, pm1, lr1, pks)
 	if err != nil {
 		panic(err)
 	}
 
 	pm3 := NewPeerManager("client3", []string{"client1", "client2"}, REF)
-	ref3, err = initRefCore(sID, "client3", dkgR3, pm3, lr3)
+	ref3, err = initRefCore(sID, "client3", dkgR3, pm3, lr3, pks)
 	if err != nil {
 		panic(err)
 	}
@@ -402,12 +444,12 @@ func InitRef() string {
 	return sID
 }
 
-func initRefCore(sID string, selfID string, dkgR *dkg.Result, pm *peerManager, l *listener) (*refresh.Refresh, error) {
+func initRefCore(sID string, selfID string, dkgR *dkg.Result, pm *peerManager, l *listener, pks map[string]*ecpointgrouplaw.ECPoint) (*refresh.Refresh, error) {
 	st := time.Now()
 	ssid := cggmp.ComputeSSID([]byte(sID), []byte(dkgR.Bks[selfID].String()), dkgR.Rid)
 	loginfo("Computed ssid %v cost %v", selfID, time.Since(st))
 
-	ref, err := refresh.NewRefresh(dkgR.Share, dkgR.PublicKey, pm, 2, PKs, dkgR.Bks, 2048, ssid, l)
+	ref, err := refresh.NewRefresh(dkgR.Share, dkgR.PublicKey, pm, 2, pks, dkgR.Bks, 2048, ssid, l)
 
 	if err != nil {
 		loginfo("Cannot create a new reshare core %v err", selfID, err)
@@ -417,7 +459,7 @@ func initRefCore(sID string, selfID string, dkgR *dkg.Result, pm *peerManager, l
 	return ref, nil
 }
 
-func StartRef(telegramID, sID string) error {
+func StartRef(telegramID, sID string) ([]byte, []byte, error) {
 	// msgReg := WrapMsg{
 	// 	Type:     REGISTER,
 	// 	SenderID: []byte(telegramID),
@@ -427,7 +469,7 @@ func StartRef(telegramID, sID string) error {
 	st := time.Now()
 	if ref1 == nil {
 		loginfo("REF is not init yet")
-		return errors.Errorf("REF is not init yet")
+		return nil, nil, errors.Errorf("REF is not init yet")
 	}
 	go ref1.Start()
 	go ref3.Start()
@@ -441,21 +483,39 @@ func StartRef(telegramID, sID string) error {
 	}
 	JSSend(msgStart)
 	if err := <-lr1.Done(); err != nil {
-		return err
+		return nil, nil, err
 	} else {
 		loginfo("REF 1 done!\n")
 	}
 	if err := <-lr3.Done(); err != nil {
-		return err
+		return nil, nil, err
 	} else {
 		loginfo("REF 3 done\n")
 	}
 	refR1, _ = ref1.GetResult()
+	r1, err := json.Marshal(refR1)
+	if err != nil {
+		loginfo("Cannot marshal dkgR1 err %v", err)
+		return nil, nil, err
+	}
 	refR3, _ = ref3.GetResult()
-
+	r3, err := json.Marshal(refR3)
+	if err != nil {
+		loginfo("Cannot marshal dkgR1 err %v", err)
+		return nil, nil, err
+	}
 	loginfo("Ref done,  cost %v", time.Since(st))
-
-	return nil
+	js.Global().Call("getPreCompute", js.Global().Get("JSON").Call("stringify", js.ValueOf(map[string]interface{}{
+		// "address": crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
+		// "privateKey1": crypto.PubkeyToAddress(*result1.PublicKey),
+		// "privateKey2": crypto.PubkeyToAddress(*result.PublicKey.ToPubKey()).String(),
+		"preCompute1": string(r1),
+		"preCompute3": string(r3),
+		// "smallPKs":    string(PKString),
+		// "address":     crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
+		// "party3": result3,
+	})))
+	return r1, r3, nil
 }
 
 func handleRef(wMsg WrapMsg, receiverID string) error {
@@ -570,12 +630,21 @@ func (l *listener) Done() <-chan error {
 	return l.errCh
 }
 
-func InitSig() string {
+func InitSig(dkgR1Bytes, refR1Bytes, PKs []byte) string {
 	sID := "helloworld"
 	var err error
 
+	dkgR1New := &dkg.Result{}
+	json.Unmarshal(dkgR1Bytes, dkgR1New)
+
+	refR1New := &refresh.Result{}
+	json.Unmarshal(refR1Bytes, refR1New)
+
+	pks := make(map[string]*ecpointgrouplaw.ECPoint)
+	json.Unmarshal(PKs, pks)
+
 	pm1 := NewPeerManager("client1", []string{"client2"}, SIGN)
-	sign1, err = initSignCore(sID, "client1", "helloworld", dkgR1, refR1, pm1, ls1)
+	sign1, err = initSignCore(sID, "client1", "helloworld", dkgR1New, refR1New, pm1, ls1)
 	if err != nil {
 		panic(err)
 	}

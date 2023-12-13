@@ -871,12 +871,11 @@ func dkresult2bytes(dkgR *dkg.Result, pks map[string]*ecpointgrouplaw.ECPoint) (
 }
 
 type ReshareResult struct {
-	DKGResult         `json:",omitempty,inline"`
-	PartialPublicKeys map[string]Pubkey                 `json:"partialPublicKeys"`
-	YSecret           string                            `json:"ySecret"`
-	PaillierKey       PaillierKey                       `json:"paillierKey"`
-	Y                 map[string]ECPoint                `json:"y"`
-	PedParameters     map[string]PederssenOpenParameter `json:"pedParameters"`
+	DKGResult     `json:",omitempty,inline"`
+	YSecret       string                            `json:"ySecret"`
+	PaillierKey   PaillierKey                       `json:"paillierKey"`
+	Y             map[string]ECPoint                `json:"y"`
+	PedParameters map[string]PederssenOpenParameter `json:"pedParameters"`
 }
 
 func refresult2bytes(refR *refresh.Result, dkgR *DKGResult) ([]byte, error) {

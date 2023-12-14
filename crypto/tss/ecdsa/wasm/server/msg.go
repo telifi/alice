@@ -43,7 +43,7 @@ func DeserializeWMsg(data []byte) (WrapMsg, error) {
 		w   WrapMsg
 		err error
 	)
-	if len(data) <= 4 {
+	if len(data) <= 3 {
 		err = errors.Errorf("Invalid msg %v", data)
 		return w, err
 	}

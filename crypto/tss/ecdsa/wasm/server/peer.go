@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 )
@@ -70,6 +71,7 @@ func (p *peerManager) AddPeer(peerId string, peerAddr string) {
 
 // Client represents a connected WebSocket client
 type Client struct {
+	sid        string
 	conn       *websocket.Conn
 	sendChan   chan interface{}
 	closed     chan struct{}
@@ -80,6 +82,7 @@ type Client struct {
 // NewClient creates a new Client instance
 func NewClient(conn *websocket.Conn) *Client {
 	return &Client{
+		sid:        uuid.NewString(),
 		conn:       conn,
 		sendChan:   make(chan interface{}),
 		closed:     make(chan struct{}),
@@ -96,13 +99,14 @@ func (c *Client) close() {
 		return
 	}
 	c.isClosed = true
-	close(c.closed)
+	c.closed <- struct{}{}
 	c.conn.Close()
+	close(c.closed)
 }
 
 // readPump reads messages from the WebSocket connection
 func (c *Client) readPump(out chan []byte) {
-	log.Println("Start readPump")
+	loginfo("%v Start readPump ", c.sid)
 	defer c.close()
 
 	for {
@@ -113,7 +117,7 @@ func (c *Client) readPump(out chan []byte) {
 		default:
 			_, message, err := c.conn.ReadMessage()
 			if err != nil {
-				log.Println("Error reading message:", err)
+				loginfo("%v Error reading message: %v", c.sid, err)
 				return
 			}
 			// log.Printf("Received: %s", ?)
@@ -124,26 +128,27 @@ func (c *Client) readPump(out chan []byte) {
 
 // writePump sends messages to the WebSocket connection
 func (c *Client) writePump() {
-	loginfo("Start WritePump")
+	loginfo("%v Start WritePump", c.sid)
 	defer c.close()
 	for {
-		loginfo("Wait for new outgoing msg")
+		loginfo("%v Wait for new outgoing msg", c.sid)
 		select {
 		case message, ok := <-c.sendChan:
-			loginfo("Got new request send to %v", c.conn.RemoteAddr().String())
+			loginfo("%v Got new request send to %v", c.sid, c.conn.RemoteAddr().String())
 			if !ok {
-				loginfo("channel is already closed")
+				loginfo("%v channel is already closed", c.sid)
 				// The channel is closed
+
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
 			if err := c.conn.WriteJSON(message); err != nil {
-				loginfo("Can not write %v", err)
+				loginfo("%v Can not write, err %v", c.sid, err)
 				return
 			}
 		case <-c.closed:
-			loginfo("connection is closed")
+			loginfo("%v connection is closed", c.sid)
 			return
 		}
 	}
@@ -187,13 +192,13 @@ func (ws *WebSocketServer) handleConnection(w http.ResponseWriter, r *http.Reque
 			log.Println("Error upgrading to WebSocket:", err)
 			return
 		}
-		loginfo("Got new connection from %v, finding listener and send to them.", r.RemoteAddr)
 		client := NewClient(conn)
+		loginfo("Got new connection %v from %v, finding listener and send to them.", client.sid, r.RemoteAddr)
 		if len(ws.connListener) == 0 {
 			loginfo("Dont have any listener")
 		}
 		for i, l := range ws.connListener {
-			loginfo("Sent to listener %v", i)
+			loginfo("Sent %v to listener %v", i, client.sid)
 			l <- client
 		}
 

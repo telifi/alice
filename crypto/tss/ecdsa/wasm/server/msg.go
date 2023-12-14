@@ -17,15 +17,19 @@ type WrapMsg struct {
 // SerializeWMsg converts a wmsg to a byte slice.
 func SerializeWMsg(w *WrapMsg) ([]byte, error) {
 	buf := new(bytes.Buffer)
+	// Serialize Type (byte).
 	if err := buf.WriteByte(w.Type); err != nil {
 		return nil, err
 	}
+
+	// Serialize SenderID (bytes).
 	if err := binary.Write(buf, binary.BigEndian, int32(len(w.SenderID))); err != nil {
 		return nil, err
 	}
 
 	buf.Write(w.SenderID)
-	// Serialize Field2 (string).
+
+	// Serialize Data (bytes).
 	if err := binary.Write(buf, binary.BigEndian, int32(len(w.Data))); err != nil {
 		return nil, err
 	}
@@ -43,8 +47,13 @@ func DeserializeWMsg(data []byte) (WrapMsg, error) {
 		w   WrapMsg
 		err error
 	)
-	if len(data) <= 3 {
+	if len(data) < 4 {
 		err = errors.Errorf("Invalid msg %v", data)
+		return w, err
+	}
+	dataLen := bytesToInt(data[:4])
+	if dataLen < 2 {
+		err = errors.Errorf("Empty message, invalid. %v", data)
 		return w, err
 	}
 	buf := bytes.NewReader(data[4:]) // Skip the length prefix.
@@ -55,7 +64,7 @@ func DeserializeWMsg(data []byte) (WrapMsg, error) {
 	if err != nil {
 		return w, err
 	}
-	// Deserialize Field2 (string).
+	// Deserialize SenderID (string).
 	var lSenderID int32
 	if err := binary.Read(buf, binary.BigEndian, &lSenderID); err != nil {
 		return w, err
@@ -64,6 +73,7 @@ func DeserializeWMsg(data []byte) (WrapMsg, error) {
 	if _, err := buf.Read(senderID); err != nil {
 		return w, err
 	}
+	// Deserialize Data (string).
 	var lData int32
 	if err := binary.Read(buf, binary.BigEndian, &lData); err != nil {
 		return w, err
@@ -85,6 +95,11 @@ func intToBytes(i int) []byte {
 	var length [4]byte
 	binary.BigEndian.PutUint32(length[:], uint32(i))
 	return length[:]
+}
+
+// bytesToInt converts a byte slice to an integer.
+func bytesToInt(b []byte) int {
+	return int(binary.BigEndian.Uint32(b))
 }
 
 func (m *WrapMsg) ToWSMsg(rID string) interface{} {

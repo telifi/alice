@@ -11,6 +11,7 @@ import (
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/dkg"
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/refresh"
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/sign"
+	"github.com/getamis/alice/types"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 )
@@ -380,7 +381,7 @@ func (s *Service) GetKeygenOutput(res *dkg.Result, incoming chan []byte) error {
 	}
 	s.ConnData.WSClient.sendMessage(msgOutput.ToWSMsg("client1"))
 	oCounter := 0
-	timeout := time.NewTimer(20 * time.Second)
+	timeout := time.NewTimer(600 * time.Second)
 	for {
 		select {
 		case msg := <-incoming:
@@ -417,4 +418,23 @@ func (s *Service) GetKeygenOutput(res *dkg.Result, incoming chan []byte) error {
 		}
 	}
 	return nil
+}
+
+type listener struct {
+	errCh chan error
+}
+
+func (l *listener) OnStateChanged(oldState types.MainState, newState types.MainState) {
+	if newState == types.StateFailed {
+		l.errCh <- errors.Errorf("State %s -> %s", oldState.String(), newState.String())
+		return
+	} else if newState == types.StateDone {
+		l.errCh <- nil
+		return
+	}
+	loginfo("State changed, old: %v; new: %v", oldState.String(), newState.String())
+}
+
+func (l *listener) Done() <-chan error {
+	return l.errCh
 }

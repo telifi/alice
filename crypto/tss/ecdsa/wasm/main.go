@@ -6,19 +6,25 @@ package main
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"syscall/js"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/getamis/alice/crypto/birkhoffinterpolation"
 	"github.com/getamis/alice/crypto/ecpointgrouplaw"
 	"github.com/getamis/alice/crypto/elliptic"
+	"github.com/getamis/alice/crypto/homo/paillier"
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp"
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/dkg"
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/refresh"
 	"github.com/getamis/alice/crypto/tss/ecdsa/cggmp/sign"
+	paillierzkproof "github.com/getamis/alice/crypto/zkproof/paillier"
 	"github.com/getamis/alice/types"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
@@ -250,26 +256,72 @@ func loginfo(format string, args ...any) {
 	s := fmt.Sprintf(format, args...)
 	js.Global().Get("console").Call("log", s)
 }
+func base64ToBytes(base64Str string) []byte {
+	// Decode the Base64 string
+	decodedBytes, err := base64.StdEncoding.DecodeString(base64Str)
+	if err != nil {
+		// Handle error, e.g., log it or return an error
+		js.Global().Call("console", "log", "Error decoding Base64:", err.Error())
+		return nil
+	}
+
+	return decodedBytes
+}
 
 func main() {
 	js.Global().Set("JSReceive", js.FuncOf(JSReceiveWrapper))
-	time.Sleep(3 * time.Second)
-	sid := InitKeyGen()
-	loginfo("DKG start")
-	d1, d3, pks, _, err := StartKeyGen("okokokokook", sid)
-	if err != nil {
-		panic(err)
+	userId := js.Global().Get("userId").String()
+	tssServiceName := js.Global().Get("tssServiceName").String()
+	// privateShare := js.Global().Get("privateShare").String()
+	// message := js.Global().Get("message").String()
+
+	if tssServiceName == "KeyGen" {
+		sid := InitKeyGen()
+		loginfo("DKG start")
+		d1, d3, pks, _, err := StartKeyGen(userId, sid)
+		if err != nil {
+			panic(err)
+		}
+		loginfo("DKG start", d1, d3, pks)
+
+		// sid = InitRef(d1, d3, pks)
+		// loginfo("REF start")
+		// _, _, err = StartRef(userId, sid)
+		// if err != nil {
+		// 	panic(err)
+		// }
+	} else if tssServiceName == "Precomputed" {
+		loginfo("Precomputed----------------")
+
+		d1 := js.Global().Get("d1").String()
+		loginfo("dk1----------------")
+
+		d3 := js.Global().Get("d3").String()
+		loginfo("dk2----------------", d3)
+
+		pks := js.Global().Get("pks").String()
+		loginfo("dk3----------------")
+
+		dR1, dR3, sid := InitRef(base64ToBytes(d1), base64ToBytes(d3), base64ToBytes(pks))
+		loginfo("dR1----------------", dR1)
+
+		loginfo("REF start")
+		_, _, err := StartRef(userId, sid, dR1, dR3)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		message := js.Global().Get("message").String()
+		d1 := js.Global().Get("d1").String()
+		loginfo("dk1----------------")
+		r1 := js.Global().Get("r1").String()
+		loginfo("dk1----------------")
+		sid := InitSig(base64ToBytes(d1), base64ToBytes(r1))
+		loginfo("dk3----------------")
+		loginfo("SIGN start")
+		StartSign(userId, sid, message)
 	}
 
-	sid = InitRef(d1, d3, pks)
-	loginfo("REF start")
-	r1, _, err := StartRef("okokokokook", sid)
-	if err != nil {
-		panic(err)
-	}
-	sid = InitSig(d1, r1, pks)
-	loginfo("SIGN start")
-	StartSign("okokokokook", sid, "helloworld")
 	select {}
 }
 
@@ -380,13 +432,13 @@ func StartKeyGen(telegramID, sID string) ([]byte, []byte, []byte, *ecdsa.PublicK
 	PKs["client1"] = myPartialPublicKey1
 	PKs["client3"] = myPartialPublicKey3
 	dkgR1 = result1
-	sk1, err := json.Marshal(dkgR1)
+	sk1, err := dkresult2bytes(dkgR1, PKs)
 	if err != nil {
 		loginfo("Cannot marshal dkgR1 err %v", err)
 		return nil, nil, nil, nil, err
 	}
 	dkgR3 = result3
-	sk3, err := json.Marshal(dkgR3)
+	sk3, err := dkresult2bytes(dkgR3, PKs)
 	if err != nil {
 		loginfo("Cannot marshal dkgR1 err %v", err)
 		return nil, nil, nil, nil, err
@@ -414,34 +466,45 @@ func StartKeyGen(telegramID, sID string) ([]byte, []byte, []byte, *ecdsa.PublicK
 	return sk1, sk3, PKString, result1.PublicKey.ToPubKey(), nil
 }
 
-func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) string {
+func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) (*DKGResult, *DKGResult, string) {
 	sID := "helloworld"
 	var err error
 
-	dkgR1New := &dkg.Result{}
-	json.Unmarshal(dkgR1Bytes, dkgR1New)
+	dkgR1NewStruct := &DKGResult{}
+	err = json.Unmarshal(dkgR1Bytes, dkgR1NewStruct)
+	loginfo("0 %v cost", err)
 
-	dkgR3New := &dkg.Result{}
-	json.Unmarshal(dkgR3Bytes, dkgR3New)
+	dkgR1New, pPKs, err := ConvertDKGResult(dkgR1NewStruct.Pubkey, dkgR1NewStruct.Share, dkgR1NewStruct.BKs, dkgR1NewStruct.Rid, dkgR1NewStruct.PartialPublicKeys)
+	loginfo("1 %v cost", err)
 
-	pks := make(map[string]*ecpointgrouplaw.ECPoint)
-	json.Unmarshal(PKs, pks)
+	dkgR3NewStruct := &DKGResult{}
+	err = json.Unmarshal(dkgR3Bytes, dkgR3NewStruct)
+	loginfo("2 %v cost", err)
+
+	dkgR3New, pPKs, err := ConvertDKGResult(dkgR3NewStruct.Pubkey, dkgR3NewStruct.Share, dkgR3NewStruct.BKs, dkgR3NewStruct.Rid, dkgR3NewStruct.PartialPublicKeys)
+	loginfo("3 %v cost", err)
+
+	// pks := make(map[string]*ecpointgrouplaw.ECPoint)
+	// err = json.Unmarshal(PKs, pks)
+	// loginfo("4 %v cost", err)
 
 	pm1 := NewPeerManager("client1", []string{"client2", "client3"}, REF)
 
-	ref1, err = initRefCore(sID, "client1", dkgR1, pm1, lr1, pks)
+	ref1, err = initRefCore(sID, "client1", dkgR1New, pm1, lr1, pPKs)
+	loginfo("5 %v cost", err)
+
 	if err != nil {
 		panic(err)
 	}
 
 	pm3 := NewPeerManager("client3", []string{"client1", "client2"}, REF)
-	ref3, err = initRefCore(sID, "client3", dkgR3, pm3, lr3, pks)
+	ref3, err = initRefCore(sID, "client3", dkgR3New, pm3, lr3, pPKs)
 	if err != nil {
 		panic(err)
 	}
 	pm1.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
 	pm3.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
-	return sID
+	return dkgR1NewStruct, dkgR3NewStruct, sID
 }
 
 func initRefCore(sID string, selfID string, dkgR *dkg.Result, pm *peerManager, l *listener, pks map[string]*ecpointgrouplaw.ECPoint) (*refresh.Refresh, error) {
@@ -459,13 +522,13 @@ func initRefCore(sID string, selfID string, dkgR *dkg.Result, pm *peerManager, l
 	return ref, nil
 }
 
-func StartRef(telegramID, sID string) ([]byte, []byte, error) {
-	// msgReg := WrapMsg{
-	// 	Type:     REGISTER,
-	// 	SenderID: []byte(telegramID),
-	// 	Data:     []byte(telegramID),
-	// }
-	// JSSend(msgReg)
+func StartRef(telegramID, sID string, dkgR1, dkgR3 *DKGResult) ([]byte, []byte, error) {
+	msgReg := WrapMsg{
+		Type:     REGISTER,
+		SenderID: []byte(telegramID),
+		Data:     []byte(telegramID),
+	}
+	JSSend(msgReg)
 	st := time.Now()
 	if ref1 == nil {
 		loginfo("REF is not init yet")
@@ -493,13 +556,13 @@ func StartRef(telegramID, sID string) ([]byte, []byte, error) {
 		loginfo("REF 3 done\n")
 	}
 	refR1, _ = ref1.GetResult()
-	r1, err := json.Marshal(refR1)
+	r1, err := refresult2bytes(refR1, dkgR1)
 	if err != nil {
 		loginfo("Cannot marshal dkgR1 err %v", err)
 		return nil, nil, err
 	}
 	refR3, _ = ref3.GetResult()
-	r3, err := json.Marshal(refR3)
+	r3, err := refresult2bytes(refR3, dkgR3)
 	if err != nil {
 		loginfo("Cannot marshal dkgR1 err %v", err)
 		return nil, nil, err
@@ -630,18 +693,20 @@ func (l *listener) Done() <-chan error {
 	return l.errCh
 }
 
-func InitSig(dkgR1Bytes, refR1Bytes, PKs []byte) string {
+func InitSig(dkgR1Bytes, refR1Bytes []byte) string {
 	sID := "helloworld"
 	var err error
 
-	dkgR1New := &dkg.Result{}
-	json.Unmarshal(dkgR1Bytes, dkgR1New)
+	dkgR1NewStruct := &DKGResult{}
+	json.Unmarshal(dkgR1Bytes, dkgR1NewStruct)
+	dkgR1New, _, err := ConvertDKGResult(dkgR1NewStruct.Pubkey, dkgR1NewStruct.Share, dkgR1NewStruct.BKs, dkgR1NewStruct.Rid, dkgR1NewStruct.PartialPublicKeys)
 
-	refR1New := &refresh.Result{}
-	json.Unmarshal(refR1Bytes, refR1New)
+	refR1NewStruct := &ReshareResult{}
+	json.Unmarshal(refR1Bytes, refR1NewStruct)
+	refR1New, err := ConvertReshareResult(refR1NewStruct.Share, refR1NewStruct.PaillierKey, refR1NewStruct.YSecret, refR1NewStruct.PartialPublicKeys, refR1NewStruct.Y, refR1NewStruct.PedParameters)
 
-	pks := make(map[string]*ecpointgrouplaw.ECPoint)
-	json.Unmarshal(PKs, pks)
+	// pks := make(map[string]*ecpointgrouplaw.ECPoint)
+	// json.Unmarshal(PKs, pks)
 
 	pm1 := NewPeerManager("client1", []string{"client2"}, SIGN)
 	sign1, err = initSignCore(sID, "client1", "helloworld", dkgR1New, refR1New, pm1, ls1)
@@ -690,12 +755,12 @@ func initSignCore(sID, selfID, msg string, dkgR *dkg.Result, refR *refresh.Resul
 }
 
 func StartSign(telegramID, sID, msg string) error {
-	// msgReg := WrapMsg{
-	// 	Type:     REGISTER,
-	// 	SenderID: []byte(telegramID),
-	// 	Data:     []byte(telegramID),
-	// }
-	// JSSend(msgReg)
+	msgReg := WrapMsg{
+		Type:     REGISTER,
+		SenderID: []byte(telegramID),
+		Data:     []byte(telegramID),
+	}
+	JSSend(msgReg)
 	st := time.Now()
 	if sign1 == nil {
 		loginfo("SIGN is not init yet")
@@ -726,6 +791,15 @@ func StartSign(telegramID, sID, msg string) error {
 	signR1, _ = sign1.GetResult()
 
 	loginfo("sign done,  cost %v", time.Since(st))
+	js.Global().Call("getSignResult", js.Global().Get("JSON").Call("stringify", js.ValueOf(map[string]interface{}{
+		// "address": crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
+		// "privateKey1": crypto.PubkeyToAddress(*result1.PublicKey),
+		// "privateKey2": crypto.PubkeyToAddress(*result.PublicKey.ToPubKey()).String(),
+		"signatureR": signR1.R.String(),
+		"signatureS": signR1.S.String(),
+		// "party3": result3,
+	})))
+
 	// for c, pk := range PKs {
 	// 	loginfo("peer:%v  ==>  %v", c, pk.String())
 	// }
@@ -748,3 +822,322 @@ func handleSign(wMsg WrapMsg, receiverID string) error {
 	}
 	return nil
 }
+
+type ECPoint struct {
+	X string `json:"x"`
+	Y string `json:"y"`
+}
+
+type PaillierKey struct {
+	P string `json:"p"`
+	Q string `json:"q"`
+}
+
+type PederssenOpenParameter struct {
+	N string `json:"n"`
+	S string `json:"s"`
+	T string `json:"t"`
+}
+
+type Pubkey struct {
+	X string `json:"x"`
+	Y string `json:"y"`
+}
+type BK struct {
+	X    string `json:"x"`
+	Rank uint32 `json:"rank"`
+}
+
+type DKGResult struct {
+	Share             string            `json:"share"`
+	Pubkey            Pubkey            `json:"pubkey"`
+	BKs               map[string]BK     `json:"bks"`
+	Rid               string            `json:"rid"`
+	PartialPublicKeys map[string]Pubkey `json:"partialPublicKeys"`
+}
+
+func dkresult2bytes(dkgR *dkg.Result, pks map[string]*ecpointgrouplaw.ECPoint) ([]byte, error) {
+	dkgResult := &DKGResult{
+		Share: dkgR.Share.String(),
+		Pubkey: Pubkey{
+			X: dkgR.PublicKey.GetX().String(),
+			Y: dkgR.PublicKey.GetY().String(),
+		},
+		BKs:               make(map[string]BK),
+		Rid:               hex.EncodeToString(dkgR.Rid),
+		PartialPublicKeys: make(map[string]Pubkey),
+	}
+	for peerId, bk := range dkgR.Bks {
+		dkgResult.BKs[peerId] = BK{
+			X:    bk.GetX().String(),
+			Rank: bk.GetRank(),
+		}
+	}
+
+	for peerId, partialPublicKey := range pks {
+		dkgResult.PartialPublicKeys[peerId] = Pubkey{
+			X: partialPublicKey.GetX().String(),
+			Y: partialPublicKey.GetY().String(),
+		}
+	}
+	return json.Marshal(dkgResult)
+}
+
+type ReshareResult struct {
+	DKGResult     `json:",omitempty,inline"`
+	YSecret       string                            `json:"ySecret"`
+	PaillierKey   PaillierKey                       `json:"paillierKey"`
+	Y             map[string]ECPoint                `json:"y"`
+	PedParameters map[string]PederssenOpenParameter `json:"pedParameters"`
+}
+
+func refresult2bytes(refR *refresh.Result, dkgR *DKGResult) ([]byte, error) {
+	p, q := refR.PaillierKey.GetPQ()
+	reshareResult := &ReshareResult{
+		DKGResult: DKGResult{
+			Share:             refR.Share.String(),
+			PartialPublicKeys: make(map[string]Pubkey),
+			BKs:               dkgR.BKs,
+			Pubkey:            dkgR.Pubkey,
+			Rid:               dkgR.Rid,
+		},
+		YSecret:       refR.YSecret.String(),
+		PedParameters: make(map[string]PederssenOpenParameter),
+		Y:             make(map[string]ECPoint),
+		PaillierKey: PaillierKey{
+			P: p.String(),
+			Q: q.String(),
+		},
+	}
+
+	for peerId, d := range refR.PartialPubKey {
+		reshareResult.PartialPublicKeys[peerId] = Pubkey{
+			X: d.GetX().String(),
+			Y: d.GetY().String(),
+		}
+	}
+
+	for peerId, d := range refR.PedParameter {
+		reshareResult.PedParameters[peerId] = PederssenOpenParameter{
+			N: d.GetN().String(),
+			S: d.GetS().String(),
+			T: d.GetT().String(),
+		}
+	}
+
+	for peerId, d := range refR.Y {
+		reshareResult.Y[peerId] = ECPoint{
+			X: d.GetX().String(),
+			Y: d.GetY().String(),
+		}
+	}
+	return json.Marshal(reshareResult)
+}
+
+// ConvertDKGResult converts DKG result from config.
+func ConvertDKGResult(cfgPubkey Pubkey, cfgShare string, cfgBKs map[string]BK, rid string, ppks map[string]Pubkey) (*dkg.Result, map[string]*ecpointgrouplaw.ECPoint, error) {
+	// Build public key.
+	r := map[string]*ecpointgrouplaw.ECPoint{}
+	for peerId, pub := range ppks {
+		p, err := convertECPoint(pub.X, pub.Y)
+		if err != nil {
+			loginfo("Cannot convert EC point", "err", err)
+			return nil, nil, err
+		}
+
+		r[peerId] = p
+	}
+	x, ok := new(big.Int).SetString(cfgPubkey.X, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "x", cfgPubkey.X)
+		return nil, nil, ErrConversion
+	}
+	y, ok := new(big.Int).SetString(cfgPubkey.Y, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "y", cfgPubkey.Y)
+		return nil, nil, ErrConversion
+	}
+	pubkey, err := ecpointgrouplaw.NewECPoint(elliptic.Secp256k1(), x, y)
+	if err != nil {
+		loginfo("Cannot get public key", "err", err)
+		return nil, nil, err
+	}
+
+	// Build share.
+	share, ok := new(big.Int).SetString(cfgShare, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "share", share)
+		return nil, nil, ErrConversion
+	}
+
+	rawRid, err := hex.DecodeString(rid)
+	if err != nil {
+		loginfo("Cannot get rid", "err", err)
+		return nil, nil, err
+	}
+
+	dkgResult := &dkg.Result{
+		PublicKey: pubkey,
+		Share:     share,
+		Bks:       make(map[string]*birkhoffinterpolation.BkParameter),
+		Rid:       rawRid,
+	}
+
+	// Build bks.
+	for peerID, bk := range cfgBKs {
+		x, ok := new(big.Int).SetString(bk.X, 10)
+		if !ok {
+			loginfo("Cannot convert string to big int", "x", bk.X)
+			return nil, nil, ErrConversion
+		}
+		dkgResult.Bks[peerID] = birkhoffinterpolation.NewBkParameter(x, bk.Rank)
+	}
+
+	return dkgResult, r, nil
+}
+
+// ConvertReshareResult converts the reshare result from config.
+func ConvertReshareResult(cfgShare string, paillierKey PaillierKey, ySecret string, partialPubKeys map[string]Pubkey, y map[string]ECPoint, pedParams map[string]PederssenOpenParameter) (*refresh.Result, error) {
+	r := &refresh.Result{
+		PartialPubKey: make(map[string]*ecpointgrouplaw.ECPoint),
+		Y:             make(map[string]*ecpointgrouplaw.ECPoint),
+		PedParameter:  make(map[string]*paillierzkproof.PederssenOpenParameter),
+	}
+
+	// Build share.
+	share, ok := new(big.Int).SetString(cfgShare, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "share", share)
+		return nil, ErrConversion
+	}
+
+	r.Share = share
+
+	ys, ok := new(big.Int).SetString(ySecret, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "share", share)
+		return nil, ErrConversion
+	}
+
+	r.YSecret = ys
+
+	p, ok := new(big.Int).SetString(paillierKey.P, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "p", paillierKey.P)
+		return nil, ErrConversion
+	}
+	q, ok := new(big.Int).SetString(paillierKey.Q, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "q", paillierKey.Q)
+		return nil, ErrConversion
+	}
+
+	var err error
+
+	r.PaillierKey, err = paillier.NewPaillierWithGivenPrimes(p, q)
+	if err != nil {
+		loginfo("Cannot NewPaillierWithGivenPrimes from P and Q", "err", err)
+		return nil, err
+	}
+
+	for peerId, pub := range partialPubKeys {
+		p, err := convertECPoint(pub.X, pub.Y)
+		if err != nil {
+			loginfo("Cannot convert EC point", "err", err)
+			return nil, err
+		}
+
+		r.PartialPubKey[peerId] = p
+	}
+
+	for peerId, yy := range y {
+		p, err := convertECPoint(yy.X, yy.Y)
+		if err != nil {
+			loginfo("Cannot convert EC point", "err", err)
+			return nil, err
+		}
+
+		r.Y[peerId] = p
+	}
+
+	for peerId, pp := range pedParams {
+		n, ok := new(big.Int).SetString(pp.N, 10)
+		if !ok {
+			loginfo("Cannot convert string to big int", "n", pp.N)
+			return nil, ErrConversion
+		}
+		s, ok := new(big.Int).SetString(pp.S, 10)
+		if !ok {
+			loginfo("Cannot convert string to big int", "s", pp.S)
+			return nil, ErrConversion
+		}
+		t, ok := new(big.Int).SetString(pp.T, 10)
+		if !ok {
+			loginfo("Cannot convert string to big int", "t", pp.T)
+			return nil, ErrConversion
+		}
+
+		r.PedParameter[peerId] = paillierzkproof.NewPedersenOpenParameter(n, s, t)
+	}
+
+	return r, nil
+}
+
+func convertECPoint(xx, yy string) (*ecpointgrouplaw.ECPoint, error) {
+	// Build public key.
+	x, ok := new(big.Int).SetString(xx, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "x", xx)
+		return nil, ErrConversion
+	}
+	y, ok := new(big.Int).SetString(yy, 10)
+	if !ok {
+		loginfo("Cannot convert string to big int", "y", yy)
+		return nil, ErrConversion
+	}
+	return ecpointgrouplaw.NewECPoint(elliptic.Secp256k1(), x, y)
+}
+
+var (
+	// ErrConversion for big int conversion error
+	ErrConversion = errors.New("conversion error")
+)
+
+// reshareResult := &ReshareResult{
+// 	DKGResult: dkgexample.DKGResult{
+// 		Share:             result.Share.String(),
+// 		PartialPublicKeys: make(map[string]config.Pubkey),
+// 		BKs:               cfg.BKs,
+// 		Pubkey:            cfg.Pubkey,
+// 		Rid:               cfg.Rid,
+// 	},
+// 	YSecret:       result.YSecret.String(),
+// 	PedParameters: make(map[string]config.PederssenOpenParameter),
+// 	Y:             make(map[string]config.ECPoint),
+// 	PaillierKey: config.PaillierKey{
+// 		P: p.String(),
+// 		Q: q.String(),
+// 	},
+// }
+
+// for peerId, d := range result.PartialPubKey {
+// 	reshareResult.PartialPublicKeys[peerId] = config.Pubkey{
+// 		X: d.GetX().String(),
+// 		Y: d.GetY().String(),
+// 	}
+// }
+
+// for peerId, d := range result.PedParameter {
+// 	reshareResult.PedParameters[peerId] = config.PederssenOpenParameter{
+// 		N: d.GetN().String(),
+// 		S: d.GetS().String(),
+// 		T: d.GetT().String(),
+// 	}
+// }
+
+// for peerId, d := range result.Y {
+// 	reshareResult.Y[peerId] = config.ECPoint{
+// 		X: d.GetX().String(),
+// 		Y: d.GetY().String(),
+// 	}
+// }

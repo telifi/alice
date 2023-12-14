@@ -160,6 +160,7 @@ const (
 	KEYGENOUTPUT
 	REF
 	SIGN
+	HELLO
 )
 
 var (
@@ -467,6 +468,25 @@ func StartKeyGen(telegramID, sID string) ([]byte, []byte, []byte, *ecdsa.PublicK
 }
 
 func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) (*DKGResult, *DKGResult, string) {
+	done := make(chan bool, 10)
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				loginfo("Trigger interval hello")
+				err := JSSend(WrapMsg{
+					Type:     HELLO,
+					SenderID: []byte("client1"),
+					Data:     []byte{0, 1, 2, 3, 4},
+				})
+				loginfo("Trigger interval hello return err %v", err)
+			case <-done:
+				return
+			}
+		}
+
+	}()
 	sID := "helloworld"
 	var err error
 
@@ -504,6 +524,7 @@ func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) (*DKGResult, *DKGResult, string
 	}
 	pm1.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
 	pm3.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
+	done <- true
 	return dkgR1NewStruct, dkgR3NewStruct, sID
 }
 

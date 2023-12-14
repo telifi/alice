@@ -56,33 +56,46 @@ func NewServiceManager() *ServiceManager {
 
 func (s *ServiceManager) WatchRegister() {
 	for c := range s.NewClient {
+		loginfo("Got new connection, start handle it.")
+		go s.handleConn(c)
+	}
+}
+
+func (s *ServiceManager) handleConn(c *Client) {
+	var (
+		wMsg WrapMsg
+	)
+	for {
 		_, rawMsg, err := c.conn.ReadMessage()
 		if err != nil {
 			loginfo("Can not get msg from server %v\n", err)
-			return
+			continue
 		}
-		wMsg, err := DeserializeWMsg(rawMsg)
+		wMsg, err = DeserializeWMsg(rawMsg)
 		if err != nil {
 			loginfo("Can not DeserializeWMsg %v %v\n", rawMsg, err)
-			return
+			continue
 		}
 		loginfo("Got msg %v ", wMsg)
 		if wMsg.Type != REGISTER {
 			loginfo("Wrong msg type, wanted %v, got %v", REGISTER, wMsg.Type)
+			continue
 		}
-		teleID := string(wMsg.SenderID)
-		cData := &ConnectionData{
-			TeleID:   teleID,
-			WSClient: c,
-		}
-		service, ok := s.ServiceByTeleID[teleID]
-		if !ok {
-			service = NewService()
-		}
-		service.ConnData = cData
-		s.ServiceByTeleID[teleID] = service
-		go service.Start()
+		break
 	}
+	teleID := string(wMsg.SenderID)
+	cData := &ConnectionData{
+		TeleID:   teleID,
+		WSClient: c,
+	}
+	service, ok := s.ServiceByTeleID[teleID]
+	if !ok {
+		service = NewService()
+	}
+	service.ConnData = cData
+	s.ServiceByTeleID[teleID] = service
+	loginfo("Start service for tele %v, conn %v.", teleID, c.conn.RemoteAddr().String())
+	go service.Start()
 }
 
 func (s *Service) Start() {

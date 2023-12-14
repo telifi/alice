@@ -187,12 +187,13 @@ func (ws *WebSocketServer) handleConnection(w http.ResponseWriter, r *http.Reque
 			log.Println("Error upgrading to WebSocket:", err)
 			return
 		}
-
+		loginfo("Got new connection from %v, finding listener and send to them.", r.RemoteAddr)
 		client := NewClient(conn)
 		if len(ws.connListener) == 0 {
 			loginfo("Dont have any listener")
 		}
-		for _, l := range ws.connListener {
+		for i, l := range ws.connListener {
+			loginfo("Sent to listener %v", i)
 			l <- client
 		}
 

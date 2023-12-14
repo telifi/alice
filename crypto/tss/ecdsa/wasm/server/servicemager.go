@@ -58,6 +58,7 @@ func (s *ServiceManager) WatchRegister() {
 		_, rawMsg, err := c.conn.ReadMessage()
 		if err != nil {
 			loginfo("Can not get msg from server %v\n", err)
+			return
 		}
 		wMsg, err := DeserializeWMsg(rawMsg)
 		if err != nil {

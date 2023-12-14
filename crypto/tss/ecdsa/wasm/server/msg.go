@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+
+	"github.com/pkg/errors"
 )
 
 type WrapMsg struct {
@@ -41,6 +43,10 @@ func DeserializeWMsg(data []byte) (WrapMsg, error) {
 		w   WrapMsg
 		err error
 	)
+	if len(data) <= 4 {
+		err = errors.Errorf("Invalid msg %v", data)
+		return w, err
+	}
 	buf := bytes.NewReader(data[4:]) // Skip the length prefix.
 
 	// Deserialize Field1 (int).

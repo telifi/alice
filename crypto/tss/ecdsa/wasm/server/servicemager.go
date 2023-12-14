@@ -69,6 +69,10 @@ func (s *ServiceManager) handleConn(c *Client) {
 		_, rawMsg, err := c.conn.ReadMessage()
 		if err != nil {
 			loginfo("Can not get msg from server %v\n", err)
+			if c.isClosed {
+				loginfo("Conn closed")
+				return
+			}
 			continue
 		}
 		wMsg, err = DeserializeWMsg(rawMsg)

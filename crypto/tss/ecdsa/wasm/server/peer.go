@@ -181,22 +181,26 @@ func NewWebSocketServer(addr string) *WebSocketServer {
 
 // handleConnection handles incoming WebSocket connections
 func (ws *WebSocketServer) handleConnection(w http.ResponseWriter, r *http.Request) {
-	conn, err := ws.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Error upgrading to WebSocket:", err)
-		return
-	}
+	if websocket.IsWebSocketUpgrade(r) {
+		conn, err := ws.upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Println("Error upgrading to WebSocket:", err)
+			return
+		}
 
-	client := NewClient(conn)
-	if len(ws.connListener) == 0 {
-		loginfo("Dont have any listener")
-	}
-	for _, l := range ws.connListener {
-		l <- client
-	}
+		client := NewClient(conn)
+		if len(ws.connListener) == 0 {
+			loginfo("Dont have any listener")
+		}
+		for _, l := range ws.connListener {
+			l <- client
+		}
 
-	// Example usage: send a welcome message
-	for !client.isClosed {
+		// // Example usage: send a welcome message
+		// for !client.isClosed {
+		// }
+	} else {
+		w.Write([]byte("Hello from non-WebSocket request!"))
 	}
 }
 

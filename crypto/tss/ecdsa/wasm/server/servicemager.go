@@ -62,7 +62,7 @@ func (s *ServiceManager) WatchRegister() {
 		}
 		wMsg, err := DeserializeWMsg(rawMsg)
 		if err != nil {
-			loginfo("Can not DeserializeWMsg %v\n", rawMsg)
+			loginfo("Can not DeserializeWMsg %v %v\n", rawMsg, err)
 			return
 		}
 		loginfo("Got msg %v ", wMsg)

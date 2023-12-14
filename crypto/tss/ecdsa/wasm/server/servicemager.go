@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -56,7 +57,8 @@ func NewServiceManager() *ServiceManager {
 
 func (s *ServiceManager) WatchRegister() {
 	for c := range s.NewClient {
-		loginfo("Got new connection, start handle it.")
+
+		loginfo("Got new connection, start handle it. %v go routines", runtime.NumGoroutine())
 		go s.handleConn(c)
 	}
 }
@@ -103,7 +105,7 @@ func (s *ServiceManager) handleConn(c *Client) {
 }
 
 func (s *Service) Start() {
-	loginfo("Start service for %v", s.ConnData.TeleID)
+	loginfo("Start service for %v, total GoRoutine %v", s.ConnData.TeleID, runtime.NumGoroutine())
 	defer s.ConnData.WSClient.close()
 	incoming := make(chan []byte, 32)
 	go s.ConnData.WSClient.readPump(incoming)
@@ -114,7 +116,7 @@ func (s *Service) Start() {
 		wMsg, err := DeserializeWMsg(msg)
 		if err != nil {
 			loginfo("Can not DeserializeWMsg %v\n", msg)
-			return
+			continue
 		}
 		loginfo("Got new msg in start %v", wMsg.Type)
 		switch wMsg.Type {
@@ -181,7 +183,7 @@ func (s *Service) StartKeyGen(sID string, incoming chan []byte) error {
 			loginfo("Got new msg in start %v", wMsg.Type)
 			if err != nil {
 				loginfo("Can not DeserializeWMsg %v\n", msg)
-				return err
+				continue
 			}
 			if wMsg.Type != KEYGEN {
 				continue
@@ -251,7 +253,7 @@ func (s *Service) StartRef(sID string, incoming chan []byte) error {
 			loginfo("Got new msg in start %v", wMsg.Type)
 			if err != nil {
 				loginfo("Can not DeserializeWMsg %v\n", msg)
-				return err
+				continue
 			}
 			if wMsg.Type != REF {
 				loginfo("Got wrong msg type %v in start", wMsg.Type)
@@ -341,7 +343,7 @@ func (s *Service) StartSign(sID string, incoming chan []byte) error {
 			loginfo("Got new msg in start %v", wMsg.Type)
 			if err != nil {
 				loginfo("Can not DeserializeWMsg %v\n", msg)
-				return err
+				continue
 			}
 			if wMsg.Type != SIGN {
 				loginfo("Got wrong msg type %v in start", wMsg.Type)
@@ -405,7 +407,7 @@ func (s *Service) GetKeygenOutput(res *dkg.Result, incoming chan []byte) error {
 			wMsg, err := DeserializeWMsg(msg)
 			if err != nil {
 				loginfo("Can not DeserializeWMsg %v\n", msg)
-				return err
+				continue
 			}
 			if wMsg.Type != KEYGENOUTPUT {
 				continue

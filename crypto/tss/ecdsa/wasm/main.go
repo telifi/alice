@@ -317,9 +317,9 @@ func main() {
 		loginfo("dk1----------------")
 		r1 := js.Global().Get("r1").String()
 		loginfo("dk1----------------")
-		sid := InitSig(base64ToBytes(d1), base64ToBytes(r1))
+		sid := InitSig(base64ToBytes(d1), base64ToBytes(r1), message)
 		loginfo("dk3----------------")
-		loginfo("SIGN start")
+		loginfo("SIGN start on msg %v", message)
 		StartSign(userId, sid, message)
 	}
 
@@ -468,25 +468,6 @@ func StartKeyGen(telegramID, sID string) ([]byte, []byte, []byte, *ecdsa.PublicK
 }
 
 func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) (*DKGResult, *DKGResult, string) {
-	done := make(chan bool, 10)
-	go func() {
-		ticker := time.NewTicker(15 * time.Second)
-		for {
-			select {
-			case <-ticker.C:
-				loginfo("Trigger interval hello")
-				err := JSSend(WrapMsg{
-					Type:     HELLO,
-					SenderID: []byte("client1"),
-					Data:     []byte{0, 1, 2, 3, 4},
-				})
-				loginfo("Trigger interval hello return err %v", err)
-			case <-done:
-				return
-			}
-		}
-
-	}()
 	sID := "helloworld"
 	var err error
 
@@ -716,7 +697,7 @@ func (l *listener) Done() <-chan error {
 	return l.errCh
 }
 
-func InitSig(dkgR1Bytes, refR1Bytes []byte) string {
+func InitSig(dkgR1Bytes, refR1Bytes []byte, msg string) string {
 	sID := "helloworld"
 	var err error
 
@@ -732,7 +713,7 @@ func InitSig(dkgR1Bytes, refR1Bytes []byte) string {
 	// json.Unmarshal(PKs, pks)
 
 	pm1 := NewPeerManager("client1", []string{"client2"}, SIGN)
-	sign1, err = initSignCore(sID, "client1", "helloworld", dkgR1New, refR1New, pm1, ls1)
+	sign1, err = initSignCore(sID, "client1", msg, dkgR1New, refR1New, pm1, ls1)
 	if err != nil {
 		panic(err)
 	}

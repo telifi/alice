@@ -271,7 +271,7 @@ func (s *Service) StartRef(sID string, incoming chan []byte) error {
 }
 
 func (s *Service) StartSign(sID, msg string, incoming chan []byte) error {
-	loginfo("Start Sign for %v %v", s.ConnData.TeleID, sID)
+	loginfo("Start Sign for %v %v data %v", s.ConnData.TeleID, sID, msg)
 	l := &listener{
 		errCh: make(chan error, 10),
 	}

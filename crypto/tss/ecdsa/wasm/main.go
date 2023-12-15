@@ -237,7 +237,7 @@ func JSReceive(receiverID string, data []byte) error {
 		GlobalMsg <- wMsg.Data
 	case STARTREFRESH:
 		ref1.BroadcastFisrtMsg()
-		ref3.BroadcastFisrtMsg()
+		// ref3.BroadcastFisrtMsg()
 	case REF:
 		return handleRef(wMsg, receiverID)
 	case STARTSIGN:
@@ -262,7 +262,7 @@ func base64ToBytes(base64Str string) []byte {
 	decodedBytes, err := base64.StdEncoding.DecodeString(base64Str)
 	if err != nil {
 		// Handle error, e.g., log it or return an error
-		js.Global().Call("console", "log", "Error decoding Base64:", err.Error())
+		loginfo("Error decoding Base64 %v: %v", base64Str, err.Error())
 		return nil
 	}
 
@@ -498,17 +498,20 @@ func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) (*DKGResult, *DKGResult, string
 	loginfo("1 %v cost", err)
 
 	dkgR3NewStruct := &DKGResult{}
-	err = json.Unmarshal(dkgR3Bytes, dkgR3NewStruct)
-	loginfo("2 %v cost", err)
+	// err = json.Unmarshal(dkgR3Bytes, dkgR3NewStruct)
+	// loginfo("2 %v cost", err)
 
-	dkgR3New, pPKs, err := ConvertDKGResult(dkgR3NewStruct.Pubkey, dkgR3NewStruct.Share, dkgR3NewStruct.BKs, dkgR3NewStruct.Rid, dkgR3NewStruct.PartialPublicKeys)
-	loginfo("3 %v cost", err)
+	// dkgR3New, pPKs, err := ConvertDKGResult(dkgR3NewStruct.Pubkey, dkgR3NewStruct.Share, dkgR3NewStruct.BKs, dkgR3NewStruct.Rid, dkgR3NewStruct.PartialPublicKeys)
+	// loginfo("3 %v cost", err)
 
 	// pks := make(map[string]*ecpointgrouplaw.ECPoint)
 	// err = json.Unmarshal(PKs, pks)
 	// loginfo("4 %v cost", err)
 
-	pm1 := NewPeerManager("client1", []string{"client2", "client3"}, REF)
+	pm1 := NewPeerManager("client1", []string{"client2"}, REF)
+	delete(dkgR1New.Bks, "client3")
+	// delete(refR.PedParameter, "client3")
+	delete(pPKs, "client3")
 
 	ref1, err = initRefCore(sID, "client1", dkgR1New, pm1, lr1, pPKs)
 	loginfo("5 %v cost", err)
@@ -517,14 +520,13 @@ func InitRef(dkgR1Bytes, dkgR3Bytes, PKs []byte) (*DKGResult, *DKGResult, string
 		panic(err)
 	}
 
-	pm3 := NewPeerManager("client3", []string{"client1", "client2"}, REF)
-	ref3, err = initRefCore(sID, "client3", dkgR3New, pm3, lr3, pPKs)
-	if err != nil {
-		panic(err)
-	}
-	pm1.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
-	pm3.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
-	done <- true
+	// pm3 := NewPeerManager("client3", []string{"client1", "client2"}, REF)
+	// ref3, err = initRefCore(sID, "client3", dkgR3New, pm3, lr3, pPKs)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	pm1.AddMsgMains(ref1.MessageMain, nil)
+	// pm3.AddMsgMains(ref1.MessageMain, ref3.MessageMain)
 	return dkgR1NewStruct, dkgR3NewStruct, sID
 }
 
@@ -556,10 +558,10 @@ func StartRef(telegramID, sID string, dkgR1, dkgR3 *DKGResult) ([]byte, []byte, 
 		return nil, nil, errors.Errorf("REF is not init yet")
 	}
 	go ref1.Start()
-	go ref3.Start()
+	// go ref3.Start()
 
 	defer ref1.Stop()
-	defer ref3.Stop()
+	// defer ref3.Stop()
 	msgStart := WrapMsg{
 		Type:     STARTREFRESH,
 		SenderID: []byte(telegramID),
@@ -571,35 +573,35 @@ func StartRef(telegramID, sID string, dkgR1, dkgR3 *DKGResult) ([]byte, []byte, 
 	} else {
 		loginfo("REF 1 done!\n")
 	}
-	if err := <-lr3.Done(); err != nil {
-		return nil, nil, err
-	} else {
-		loginfo("REF 3 done\n")
-	}
+	// if err := <-lr3.Done(); err != nil {
+	// 	return nil, nil, err
+	// } else {
+	// 	loginfo("REF 3 done\n")
+	// }
 	refR1, _ = ref1.GetResult()
 	r1, err := refresult2bytes(refR1, dkgR1)
 	if err != nil {
 		loginfo("Cannot marshal dkgR1 err %v", err)
 		return nil, nil, err
 	}
-	refR3, _ = ref3.GetResult()
-	r3, err := refresult2bytes(refR3, dkgR3)
-	if err != nil {
-		loginfo("Cannot marshal dkgR1 err %v", err)
-		return nil, nil, err
-	}
+	// refR3, _ = ref3.GetResult()
+	// r3, err := refresult2bytes(refR3, dkgR3)
+	// if err != nil {
+	// 	loginfo("Cannot marshal dkgR1 err %v", err)
+	// 	return nil, nil, err
+	// }
 	loginfo("Ref done,  cost %v", time.Since(st))
 	js.Global().Call("getPreCompute", js.Global().Get("JSON").Call("stringify", js.ValueOf(map[string]interface{}{
 		// "address": crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
 		// "privateKey1": crypto.PubkeyToAddress(*result1.PublicKey),
 		// "privateKey2": crypto.PubkeyToAddress(*result.PublicKey.ToPubKey()).String(),
 		"preCompute1": string(r1),
-		"preCompute3": string(r3),
+		"preCompute3": string([]byte{}),
 		// "smallPKs":    string(PKString),
 		// "address":     crypto.PubkeyToAddress(*result1.PublicKey.ToPubKey()).String(),
 		// "party3": result3,
 	})))
-	return r1, r3, nil
+	return r1, []byte{}, nil
 }
 
 func handleRef(wMsg WrapMsg, receiverID string) error {
@@ -794,8 +796,8 @@ func StartSign(telegramID, sID, msg string) error {
 	// defer sign3.Stop()
 	msgStart := WrapMsg{
 		Type:     STARTSIGN,
-		SenderID: []byte(telegramID),
-		Data:     []byte(sID),
+		SenderID: []byte(sID),
+		Data:     []byte(msg),
 	}
 	JSSend(msgStart)
 	if err := <-ls1.Done(); err != nil {

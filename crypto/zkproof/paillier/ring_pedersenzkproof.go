@@ -16,6 +16,7 @@ package paillier
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/getamis/alice/crypto/utils"
@@ -90,6 +91,7 @@ func (msg *RingPederssenParameterMessage) Verify(ssidInfo []byte) error {
 			return err
 		}
 		if !utils.IsRelativePrime(Ai, n) {
+			fmt.Printf("Here 1 %v %v \n", Ai.String(), n.String())
 			return ErrVerifyFailure
 		}
 		zi := new(big.Int).SetBytes(Z[i])
@@ -109,6 +111,7 @@ func (msg *RingPederssenParameterMessage) Verify(ssidInfo []byte) error {
 		Asei.Mod(Asei, n)
 		tzi := new(big.Int).Exp(t, zi, n)
 		if tzi.Cmp(Asei) != 0 {
+			fmt.Printf("Here 2 %v %v \n", tzi.String(), Asei.String())
 			return ErrVerifyFailure
 		}
 	}

@@ -16,7 +16,9 @@ package refresh
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/getamis/alice/crypto/birkhoffinterpolation"
 	commitment "github.com/getamis/alice/crypto/commitment"
@@ -71,15 +73,19 @@ func newRound1Handler(oldShare *big.Int, pubKey *ecpointgrouplaw.ECPoint, peerMa
 	numPeers := peerManager.NumPeers()
 	// curve := pubKey.GetCurve()
 	// Generate 4*kappa long safe primes p, q with N = p*q
+	st := time.Now()
 	paillierKey, err := paillier.NewPaillierSafePrime(keySize)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("NewPaillierSafePrime cost %v\n", time.Since(st))
 	// Set pederssen parameter from paillierKey: Sample r in Z_N^ast, lambda = Z_phi(N), t = r^2 and s = t^lambda mod N
+	st = time.Now()
 	ped, err := paillierKey.NewPedersenParameterByPaillier()
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("NewPedersenParameterByPaillier cost %v\n", time.Since(st))
 
 	p := &round1Handler{
 		ssid:          ssid,

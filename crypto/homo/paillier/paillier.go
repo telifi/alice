@@ -17,7 +17,9 @@ package paillier
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"math/big"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -338,14 +340,18 @@ func getNAndLambda(keySize int, isSafe bool) (*big.Int, *big.Int, *big.Int, *big
 func generatePrime(isSafe bool, primeSize int) (*big.Int, *big.Int, error) {
 	if isSafe {
 		for i := 0; i < maxRetry; i++ {
+			st := time.Now()
 			safeP, err := utils.GenerateRandomSafePrime(rand.Reader, primeSize)
 			if err != nil {
 				return nil, nil, err
 			}
+			fmt.Printf("safeP cost %v, retry %v \n", time.Since(st), i)
+			st = time.Now()
 			safeQ, err := utils.GenerateRandomSafePrime(rand.Reader, primeSize)
 			if err != nil {
 				return nil, nil, err
 			}
+			fmt.Printf("safeQ cost %v, retry %v \n", time.Since(st), i)
 			p := new(big.Int).Set(safeP.P)
 			q := new(big.Int).Set(safeQ.P)
 

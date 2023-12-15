@@ -122,9 +122,9 @@ func (s *Service) Start() {
 			loginfo("ref done. cost %v", time.Since(st))
 			// return
 		case STARTSIGN:
-			sID := string(wMsg.Data)
+			sID := string(wMsg.SenderID)
 			st := time.Now()
-			err := s.StartSign(sID, incoming)
+			err := s.StartSign(sID, string(wMsg.Data), incoming)
 			if err != nil {
 				loginfo("Can not start sign for %v - %v, err %v", sID, s.ConnData.TeleID, err)
 				return
@@ -208,8 +208,10 @@ func (s *Service) StartRef(sID string, incoming chan []byte) error {
 	l = &listener{
 		errCh: make(chan error, 10),
 	}
-
-	refP, err := refresh.NewRefresh(s.DKGResult.Share, s.DKGResult.PublicKey, NewPeerManager("client2", []string{"client1", "client3"}, s.ConnData.WSClient, REF), 2, s.PPKs, s.DKGResult.Bks, 2048, ssid, l)
+	delete(s.DKGResult.Bks, "client3")
+	// delete(refR.PedParameter, "client3")
+	delete(s.PPKs, "client3")
+	refP, err := refresh.NewRefresh(s.DKGResult.Share, s.DKGResult.PublicKey, NewPeerManager("client2", []string{"client1"}, s.ConnData.WSClient, REF), 2, s.PPKs, s.DKGResult.Bks, 2048, ssid, l)
 	if err != nil {
 		loginfo("Cannot create a new reshare core client2 err", err)
 		return err
@@ -268,8 +270,7 @@ func (s *Service) StartRef(sID string, incoming chan []byte) error {
 
 }
 
-func (s *Service) StartSign(sID string, incoming chan []byte) error {
-	msg := "helloworld"
+func (s *Service) StartSign(sID, msg string, incoming chan []byte) error {
 	loginfo("Start Sign for %v %v", s.ConnData.TeleID, sID)
 	l := &listener{
 		errCh: make(chan error, 10),
@@ -301,7 +302,7 @@ func (s *Service) StartSign(sID string, incoming chan []byte) error {
 	)
 
 	if err != nil {
-		loginfo("Cannot create a new reshare core client2 err", err)
+		loginfo("Cannot create a new reshare core client2 err %v", err)
 		return err
 	}
 	loginfo("Init ref cost %v", time.Since(st))
